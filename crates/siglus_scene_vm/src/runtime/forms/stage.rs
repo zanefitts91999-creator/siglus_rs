@@ -3173,7 +3173,7 @@ fn ensure_mwnd(ctx: &mut CommandContext, st: &mut StageFormState, stage_idx: i64
             m.name_window_align = t.name_window_align;
             m.overflow_check_size = t.overflow_check_size;
             m.face_hide_name = t.face_hide_name;
-            m.default_moji_size = t.moji_size.max(1);
+            m.default_moji_size = ((t.moji_size.max(1) as f64) * 1.20).round() as i64;
             // C_elm_mwnd::reinit resolves negative per-window colors against
             // the global MWND colors before initializing each message page.
             // Passing -1 through to glyphs turns shadows/outlines white.
@@ -13531,7 +13531,11 @@ fn mwnd_matching_indent_close(open: char, close: char) -> bool {
 }
 
 fn mwnd_current_moji_size(m: &MwndState) -> i64 {
-    m.moji_size.unwrap_or(m.default_moji_size.max(1)).max(1)
+    if let Some(explicit) = m.moji_size {
+        ((explicit.max(1) as f64) * 1.20).round() as i64
+    } else {
+        m.default_moji_size.max(1)
+    }
 }
 
 fn mwnd_message_extent(m: &MwndState) -> (i64, i64) {
@@ -13613,7 +13617,7 @@ fn mwnd_rebuild_name_glyphs(ctx: &CommandContext, m: &mut MwndState, mwnd_idx: u
         .get(mwnd_idx)
         .cloned()
         .unwrap_or_default();
-    let default_size = template.name_moji_size.max(1);
+    let default_size = ((template.name_moji_size.max(1) as f64) * 1.20).round() as i64;
     let (space_x, _space_y) = template.name_moji_space;
     let mut cur_size = default_size;
     let default_color_no = m.name_moji_color.unwrap_or(-1);

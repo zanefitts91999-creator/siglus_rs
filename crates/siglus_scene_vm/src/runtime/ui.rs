@@ -731,7 +731,8 @@ impl UiRuntime {
     }
 
     fn message_font_px(&self) -> u32 {
-        self.mwnd.window.moji_size.unwrap_or(26).clamp(10, 96) as u32
+        let size = self.mwnd.window.moji_size.unwrap_or(26).clamp(10, 96) as f32;
+        (size * 1.20).round() as u32
     }
 
     fn name_font_px(&self) -> u32 {

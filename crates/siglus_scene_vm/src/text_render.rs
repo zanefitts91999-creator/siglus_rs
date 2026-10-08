@@ -55,6 +55,11 @@ mod embedded_font {
         "MSPGothic",
         "msgothic",
         "default",
+        "simsun",
+        "宋体",
+        "新宋体",
+        "nsimsun",
+        "songti",
     ];
 }
 
@@ -2325,7 +2330,10 @@ fn font_path_priority(path: &Path) -> (u8, u8, String) {
         Some("ttc") => 1,
         _ => 2,
     };
-    let family_score = if name.contains("ms pgothic")
+    let family_score = if name.contains("simsun")
+        || name.contains("song")
+        || name.contains("宋体")
+        || name.contains("ms pgothic")
         || name.contains("mspgothic")
         || name.contains("ms-pgothic")
         || name.contains("msgothic")
