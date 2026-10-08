@@ -18,7 +18,7 @@ enum {
     MaxTextures = 4096,
     CodeMemorySize = 2 * 1024 * 1024,
     CommandChunkSize = 1024 * 1024,
-    RingSize = 32 * 1024 * 1024,
+    RingSize = 64 * 1024 * 1024,
     MaxPrograms = 32,
     MaxDeferred = 1024,
 };

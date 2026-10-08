@@ -1,0 +1,31 @@
+name: Build Switch NRO (Optimized)
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+jobs:
+  switch:
+    name: Build Switch NRO
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/xmoezzz/siglus_rs/switch-build:latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build NRO
+        run: |
+          set -euo pipefail
+          make -C platform/switch/runtime
+          mkdir -p dist/switch
+          cp platform/switch/runtime/siglus_switch.nro dist/switch/siglus-switch.nro
+
+      - name: Upload NRO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: siglus-switch-optimized
+          path: dist/switch/siglus-switch.nro
+          if-no-files-found: error

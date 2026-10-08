@@ -132,6 +132,24 @@ fn movie_output_dimensions(width: u32, height: u32) -> (u32, u32) {
             );
         }
     }
+    #[cfg(target_os = "horizon")]
+    {
+        const MAX_WIDTH: u32 = 1280;
+        const MAX_HEIGHT: u32 = 720;
+        if width > MAX_WIDTH || height > MAX_HEIGHT {
+            if u64::from(width) * u64::from(MAX_HEIGHT) >= u64::from(height) * u64::from(MAX_WIDTH)
+            {
+                return (
+                    MAX_WIDTH,
+                    ((u64::from(height) * u64::from(MAX_WIDTH) / u64::from(width)) as u32).max(1),
+                );
+            }
+            return (
+                ((u64::from(width) * u64::from(MAX_HEIGHT) / u64::from(height)) as u32).max(1),
+                MAX_HEIGHT,
+            );
+        }
+    }
     (width, height)
 }
 

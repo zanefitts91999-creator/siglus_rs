@@ -854,9 +854,10 @@ impl Renderer {
         };
         if packet.alpha_readback && !packet.has_current_hit_surface() && target.hit_version != Some(packet.version) {
             target.hit_version = Some(packet.version);
-            if let Some(rgba) = target.output.read() {
-                packet.publish_hit_alpha(rgba.chunks_exact(4).map(|px| px[3]).collect());
-            }
+            // On Switch with gamepad controls, synchronous dkQueueWaitIdle stalls the entire GPU pipeline.
+            // Publish solid hit surface to satisfy VM hit-testing without GPU readback stall.
+            let count = (target.output.width as usize) * (target.output.height as usize);
+            packet.publish_hit_alpha(vec![255u8; count]);
         }
     }
 
