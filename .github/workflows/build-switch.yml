@@ -12,13 +12,17 @@ jobs:
     runs-on: ubuntu-22.04
     container:
       image: ghcr.io/xmoezzz/siglus_rs/switch-build:latest
+    env:
+      RUSTFLAGS: ""
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Build NRO
         run: |
-          set -euo pipefail
           make -C platform/switch/runtime
           mkdir -p dist/switch
           cp platform/switch/runtime/siglus_switch.nro dist/switch/siglus-switch.nro
