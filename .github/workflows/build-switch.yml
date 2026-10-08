@@ -21,15 +21,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build NRO
+      - name: Build NRO and NSO
         run: |
           make -C platform/switch/runtime
           mkdir -p dist/switch
           cp platform/switch/runtime/siglus_switch.nro dist/switch/siglus-switch.nro
+          cp platform/switch/runtime/siglus_switch.nso dist/switch/main
 
-      - name: Upload NRO artifact
+      - name: Upload Switch artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: siglus-switch-optimized
-          path: dist/switch/siglus-switch.nro
+          name: siglus-switch-binaries
+          path: |
+            dist/switch/siglus-switch.nro
+            dist/switch/main
           if-no-files-found: error

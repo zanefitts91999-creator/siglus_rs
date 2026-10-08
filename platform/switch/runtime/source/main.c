@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include <switch.h>
 #include <switch/nvidia/address_space.h>
@@ -205,6 +206,10 @@ int main(void) {
     /* libnx's default __appInit has already called fsInitialize() and
      * fsdevMountSdmc() before main. Mount the NRO payload only after that
      * startup path has completed, and never hide a mount failure. */
+    mkdir("sdmc:/switch", 0777);
+    mkdir("sdmc:/switch/siglus_rs", 0777);
+    mkdir("sdmc:/switch/siglus_rs/savedata", 0777);
+
     Result rc = romfsMountSelf("romfs");
     log_startup_result("romfsMountSelf", rc);
     if (R_FAILED(rc)) {

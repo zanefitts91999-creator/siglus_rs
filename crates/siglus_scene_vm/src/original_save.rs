@@ -979,6 +979,13 @@ impl<'a> OriginalStreamReader<'a> {
 }
 
 pub fn save_dir(project_dir: &Path) -> PathBuf {
+    #[cfg(target_os = "horizon")]
+    {
+        let s = project_dir.to_string_lossy();
+        if s.starts_with("romfs:") || s.contains("romfs") {
+            return PathBuf::from("sdmc:/switch/siglus_rs/savedata");
+        }
+    }
     project_dir.join("savedata")
 }
 

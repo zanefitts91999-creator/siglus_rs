@@ -943,8 +943,11 @@ fn save_thumb_config(ctx: &CommandContext) -> SaveThumbConfig {
 }
 
 pub(crate) fn thumb_candidate_paths(dir: &Path, idx: i64) -> [PathBuf; 2] {
-    let project_dir = dir.parent().unwrap_or(dir);
-    original_save::thumb_candidate_paths_for_no(project_dir, idx.max(0) as usize)
+    let stem = format!("{:04}", idx.max(0));
+    [
+        dir.join(format!("{stem}.png")),
+        dir.join(format!("{stem}.bmp")),
+    ]
 }
 
 fn thumb_path_for_no_with_config(
