@@ -349,17 +349,26 @@ impl Renderer {
         }
     }
 
+    fn target_size(&self) -> (u32, u32) {
+        (
+            self.logical_w.min(self.display_w),
+            self.logical_h.min(self.display_h),
+        )
+    }
+
     fn target_geom(&self) -> Geom {
+        let (w, h) = self.target_size();
         Geom {
-            width: self.logical_w,
-            height: self.logical_h,
-            viewport: [0.0, 0.0, self.logical_w as f32, self.logical_h as f32],
+            width: w,
+            height: h,
+            viewport: [0.0, 0.0, w as f32, h as f32],
         }
     }
 
     fn ensure_targets(&mut self) -> Result<()> {
+        let (w, h) = self.target_size();
         while self.targets.len() < 4 {
-            let target = Texture::target(self.logical_w, self.logical_h)
+            let target = Texture::target(w, h)
                 .ok_or_else(|| anyhow::anyhow!("render target allocation failed"))?;
             self.targets.push(target);
         }
@@ -721,7 +730,7 @@ impl Renderer {
         if matches!(wipe.wipe_type, 300 | 301) {
             gpu::begin_pass(Some(&self.targets[target as usize]), None, true);
             self.copy(self.targets[under as usize].id, geom);
-            for page in build_page_wipe_draws(wipe, self.logical_w as f32, self.logical_h as f32) {
+            for page in build_page_wipe_draws(wipe, geom.width as f32, geom.height as f32) {
                 let mut draw = GpuDraw::new(self.programs.page_v, self.programs.page_f);
                 draw.layout(size_of::<PageWipeVertex>() as u32, PAGE_ATTRIBUTES);
                 draw.vertices(&page.vertices);
@@ -743,7 +752,7 @@ impl Renderer {
             Some(id) => self.image_texture(images, id).unwrap_or(-1),
             None => self.generated_wipe_mask(wipe),
         };
-        let uniform: WipeUniform = wipe_uniform(wipe, self.logical_w as f32, self.logical_h as f32);
+        let uniform: WipeUniform = wipe_uniform(wipe, geom.width as f32, geom.height as f32);
         gpu::begin_pass(Some(&self.targets[target as usize]), Some([0.0, 0.0, 0.0, 1.0]), false);
         // `vs_main` builds its full-screen triangle from the vertex index.
         let dummy = [0u32; 3];
@@ -765,11 +774,12 @@ impl Renderer {
 
     /// `ensure_generated_wipe_mask`.
     fn generated_wipe_mask(&mut self, wipe: &WipeRenderPlan) -> i32 {
+        let (w, h) = self.target_size();
         let key = WipeMaskCacheKey {
             wipe_type: wipe.wipe_type,
             option: wipe.option.clone(),
-            width: self.logical_w,
-            height: self.logical_h,
+            width: w,
+            height: h,
             seed: wipe.random_seed,
         };
         if let Some((cached, texture)) = &self.wipe_mask
@@ -777,7 +787,7 @@ impl Renderer {
         {
             return texture.id;
         }
-        self.wipe_mask = generated_wipe_mask(wipe, self.logical_w, self.logical_h)
+        self.wipe_mask = generated_wipe_mask(wipe, w, h)
             .and_then(|image| Texture::from_image(&image, (0, 0)))
             .map(|texture| (key, texture));
         self.wipe_mask.as_ref().map_or(-1, |(_, t)| t.id)

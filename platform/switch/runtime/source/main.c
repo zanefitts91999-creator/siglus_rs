@@ -96,9 +96,7 @@ static const char* select_game_root(void) {
 }
 
 void siglus_switch_random_fill(void* buffer, size_t length) {
-    siglus_switch_log_message("siglus_switch: random-fill begin\n");
     randomGet(buffer, length);
-    siglus_switch_log_message("siglus_switch: random-fill complete\n");
 }
 
 /* Rust's newlib std build uses these Unix-shaped hooks.  Horizon has neither

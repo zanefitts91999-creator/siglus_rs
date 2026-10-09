@@ -272,6 +272,9 @@ pub struct ImageManager {
 }
 
 /// Bounds of `ImageManager::recent_albums`.
+#[cfg(target_os = "horizon")]
+const RECENT_ALBUMS: usize = 256;
+#[cfg(not(target_os = "horizon"))]
 const RECENT_ALBUMS: usize = 64;
 #[cfg(target_os = "vita")]
 const RECENT_ALBUM_BYTES: usize = 24 * 1024 * 1024;
