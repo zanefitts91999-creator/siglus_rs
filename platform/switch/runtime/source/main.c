@@ -39,6 +39,8 @@ extern void siglus_switch_engine_gamepad(void* host, uint8_t button, bool down);
 extern void siglus_switch_engine_touch(void* host, int32_t phase, double x, double y);
 extern void siglus_switch_engine_destroy(void* host);
 extern void siglus_switch_audio_render_i16(int16_t* dst, size_t frames);
+extern void siglus_switch_get_phase_stats(uint64_t* pump_us, uint64_t* tick_us,
+                                          uint64_t* build_us, uint64_t* render_us);
 
 /* A packaged game is self-contained: prefer its RomFS payload.  Keeping the
  * SD-card location as a fallback also preserves the small-NRO deployment
@@ -179,7 +181,6 @@ static void initialize_audio(void) {
 
 static void pump_audio(void) {
     if (!audio_driver_initialized) return;
-    bool updated = false;
     for (unsigned i = 0; i < AudioBufferCount; ++i) {
         AudioDriverWaveBuf* wavebuf = &audio_wavebufs[i];
         if (wavebuf->state != AudioDriverWaveBufState_Free &&
@@ -192,11 +193,8 @@ static void pump_audio(void) {
         wavebuf->end_sample_offset = AudioBufferFrames;
         wavebuf->is_looping = false;
         audrvVoiceAddWaveBuf(&audio_driver, 0, wavebuf);
-        updated = true;
     }
-    if (updated) {
-        audrvUpdate(&audio_driver);
-    }
+    audrvUpdate(&audio_driver);
 }
 
 static void exit_audio(void) {
@@ -295,17 +293,32 @@ int main(void) {
             const double fps = 600.0 / elapsed_sec;
 
             uint64_t fence_ticks = 0, acq_ticks = 0;
-            siglus_gpu_get_bench_stats(&fence_ticks, &acq_ticks);
+            uint64_t draw_ticks = 0, upload_ticks = 0;
+            uint64_t draws = 0, uploads = 0, upload_bytes = 0;
+            siglus_gpu_get_bench_stats(&fence_ticks, &acq_ticks, &draw_ticks, &upload_ticks,
+                                       &draws, &uploads, &upload_bytes);
+
+            uint64_t pump_us = 0, tick_us = 0, build_us = 0, render_us = 0;
+            siglus_switch_get_phase_stats(&pump_us, &tick_us, &build_us, &render_us);
 
             const double step_ms = ((double) step_ticks_acc / freq / 600.0) * 1000.0;
             const double audio_ms = ((double) audio_ticks_acc / freq / 600.0) * 1000.0;
             const double fence_ms = ((double) fence_ticks / freq / 600.0) * 1000.0;
             const double acq_ms = ((double) acq_ticks / freq / 600.0) * 1000.0;
+            const double draw_ms = ((double) draw_ticks / freq / 600.0) * 1000.0;
+            const double upload_ms = ((double) upload_ticks / freq / 600.0) * 1000.0;
+            const double pump_ms = (double) pump_us / 600.0 / 1000.0;
+            const double tick_ms = (double) tick_us / 600.0 / 1000.0;
+            const double build_ms = (double) build_us / 600.0 / 1000.0;
+            const double render_ms = (double) render_us / 600.0 / 1000.0;
 
-            char message[160];
+            char message[256];
             snprintf(message, sizeof(message),
-                     "siglus_switch: frame %u, %.1f fps (step=%.2fms [fence=%.2fms, acq=%.2fms], audio=%.2fms)\n",
-                     frame_count, fps, step_ms, fence_ms, acq_ms, audio_ms);
+                     "siglus_switch: frame %u, %.1f fps (step=%.2fms [pump=%.2f, tick=%.2f, build=%.2f, rend=%.2f], gpu=[fence=%.2f, acq=%.2f, drw=%.2f/%llu, up=%.2f/%llu/%lluKB], aud=%.2fms)\n",
+                     frame_count, fps, step_ms, pump_ms, tick_ms, build_ms, render_ms,
+                     fence_ms, acq_ms, draw_ms, (unsigned long long) draws,
+                     upload_ms, (unsigned long long) uploads, (unsigned long long) (upload_bytes / 1024),
+                     audio_ms);
             siglus_switch_log_message(message);
 
             step_ticks_acc = 0;

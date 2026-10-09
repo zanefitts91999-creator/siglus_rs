@@ -482,23 +482,27 @@ impl Renderer {
         });
         for index in 0..self.plan.draws.len() {
             let draw = &self.plan.draws[index];
-            let handles = [
-                draw.image_id.clone(),
-                draw.mask_image_id.clone(),
-                draw.tonecurve_image_id.clone(),
-                draw.fog_image_id.clone(),
-                draw.wipe_src_image_id.clone(),
-            ];
-            let paths = [
-                draw.mesh_texture_path.clone(),
-                draw.mesh_normal_texture_path.clone(),
-                draw.mesh_toon_texture_path.clone(),
-            ];
-            for handle in handles.into_iter().flatten() {
-                self.image_texture(images, &handle);
+            for handle in [
+                &draw.image_id,
+                &draw.mask_image_id,
+                &draw.tonecurve_image_id,
+                &draw.fog_image_id,
+                &draw.wipe_src_image_id,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                self.image_texture(images, handle);
             }
-            for path in paths.into_iter().flatten() {
-                self.external_texture(&path);
+            for path in [
+                &draw.mesh_texture_path,
+                &draw.mesh_normal_texture_path,
+                &draw.mesh_toon_texture_path,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                self.external_texture(path);
             }
         }
         Ok(())

@@ -18,6 +18,34 @@ unsafe extern "C" {
     fn siglus_switch_log_message(message: *const c_char);
 }
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+pub(crate) static PUMP_US_ACC: AtomicU64 = AtomicU64::new(0);
+pub(crate) static TICK_US_ACC: AtomicU64 = AtomicU64::new(0);
+pub(crate) static BUILD_US_ACC: AtomicU64 = AtomicU64::new(0);
+pub(crate) static RENDER_US_ACC: AtomicU64 = AtomicU64::new(0);
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn siglus_switch_get_phase_stats(
+    pump_us: *mut u64,
+    tick_us: *mut u64,
+    build_us: *mut u64,
+    render_us: *mut u64,
+) {
+    if !pump_us.is_null() {
+        unsafe { *pump_us = PUMP_US_ACC.swap(0, Ordering::Relaxed) };
+    }
+    if !tick_us.is_null() {
+        unsafe { *tick_us = TICK_US_ACC.swap(0, Ordering::Relaxed) };
+    }
+    if !build_us.is_null() {
+        unsafe { *build_us = BUILD_US_ACC.swap(0, Ordering::Relaxed) };
+    }
+    if !render_us.is_null() {
+        unsafe { *render_us = RENDER_US_ACC.swap(0, Ordering::Relaxed) };
+    }
+}
+
 /// Write a NUL-terminated static startup marker through the C shell. This
 /// avoids Rust stdio while the Horizon engine is still being constructed.
 pub(crate) fn report_switch_marker(message: &'static [u8]) {

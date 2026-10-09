@@ -399,11 +399,13 @@ impl SiglusHost {
             return Ok(false);
         }
         if self.script_needs_pump || self.vm.ctx.wait.needs_runtime_poll() {
-            #[cfg(target_os = "vita")]
+            #[cfg(any(target_os = "vita", target_os = "horizon"))]
             let start = Instant::now();
             self.pump_vm()?;
             #[cfg(target_os = "vita")]
             crate::render::vita_stats::phase(crate::render::vita_stats::PUMP, start);
+            #[cfg(target_os = "horizon")]
+            crate::switch_host::PUMP_US_ACC.fetch_add(start.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
         }
         self.redraw()?;
         Ok(self.pending_exit || (self.vm.is_halted() && self.flow.stack.is_empty()))
@@ -1611,11 +1613,13 @@ impl SiglusHost {
                     switch_trace_frame
                 ));
             }
-            #[cfg(target_os = "vita")]
+            #[cfg(any(target_os = "vita", target_os = "horizon"))]
             let start = Instant::now();
             self.pump_vm()?;
             #[cfg(target_os = "vita")]
             crate::render::vita_stats::phase(crate::render::vita_stats::PUMP, start);
+            #[cfg(target_os = "horizon")]
+            crate::switch_host::PUMP_US_ACC.fetch_add(start.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
             #[cfg(target_os = "horizon")]
             if switch_trace_enabled {
                 crate::switch_host::report_switch_diagnostic(&format!(
@@ -1638,11 +1642,13 @@ impl SiglusHost {
                 switch_trace_frame
             ));
         }
-        #[cfg(target_os = "vita")]
+        #[cfg(any(target_os = "vita", target_os = "horizon"))]
         let start = Instant::now();
         self.vm.tick_frame()?;
         #[cfg(target_os = "vita")]
         crate::render::vita_stats::phase(crate::render::vita_stats::TICK, start);
+        #[cfg(target_os = "horizon")]
+        crate::switch_host::TICK_US_ACC.fetch_add(start.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
         #[cfg(target_os = "horizon")]
         if switch_trace_enabled {
             crate::switch_host::report_switch_diagnostic(&format!(
@@ -1691,11 +1697,13 @@ impl SiglusHost {
                     switch_trace_frame
                 ));
             }
-            #[cfg(target_os = "vita")]
+            #[cfg(any(target_os = "vita", target_os = "horizon"))]
             let start = Instant::now();
             let frame = self.vm.ctx.render_frame_with_effects();
             #[cfg(target_os = "vita")]
             crate::render::vita_stats::phase(crate::render::vita_stats::BUILD, start);
+            #[cfg(target_os = "horizon")]
+            crate::switch_host::BUILD_US_ACC.fetch_add(start.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
             #[cfg(target_os = "horizon")]
             if switch_trace_enabled {
                 let (wipe_type, wipe_progress, emote_count) = if let Some(wipe) = &frame.wipe {
@@ -1733,9 +1741,13 @@ impl SiglusHost {
                     switch_trace_frame
                 ));
             }
+            #[cfg(target_os = "horizon")]
+            let start_render = Instant::now();
             self.renderer
                 .borrow_mut()
                 .render_frame(&self.vm.ctx.images, &frame)?;
+            #[cfg(target_os = "horizon")]
+            crate::switch_host::RENDER_US_ACC.fetch_add(start_render.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
             #[cfg(target_os = "horizon")]
             if switch_trace_enabled {
                 crate::switch_host::report_switch_diagnostic(&format!(

@@ -77,12 +77,29 @@ static bool pass_skipped;      /* the display could not be acquired */
 static unsigned acquire_failures;
 static uint64_t total_fence_wait_ticks;
 static uint64_t total_acquire_ticks;
+static uint64_t total_draw_ticks;
+static uint64_t total_upload_ticks;
+static uint64_t total_draws;
+static uint64_t total_uploads;
+static uint64_t total_upload_bytes;
 
-void siglus_gpu_get_bench_stats(uint64_t* fence_ticks, uint64_t* acq_ticks) {
+void siglus_gpu_get_bench_stats(uint64_t* fence_ticks, uint64_t* acq_ticks,
+                                uint64_t* draw_ticks, uint64_t* upload_ticks,
+                                uint64_t* draws, uint64_t* uploads, uint64_t* upload_bytes) {
     if (fence_ticks) *fence_ticks = total_fence_wait_ticks;
     if (acq_ticks) *acq_ticks = total_acquire_ticks;
+    if (draw_ticks) *draw_ticks = total_draw_ticks;
+    if (upload_ticks) *upload_ticks = total_upload_ticks;
+    if (draws) *draws = total_draws;
+    if (uploads) *uploads = total_uploads;
+    if (upload_bytes) *upload_bytes = total_upload_bytes;
     total_fence_wait_ticks = 0;
     total_acquire_ticks = 0;
+    total_draw_ticks = 0;
+    total_upload_ticks = 0;
+    total_draws = 0;
+    total_uploads = 0;
+    total_upload_bytes = 0;
 }
 
 static void log_result(const char* what, int value) {
@@ -359,6 +376,7 @@ int32_t siglus_gpu_texture_create(uint32_t width, uint32_t height, uint32_t mip_
 
 void siglus_gpu_texture_upload(int32_t id, uint32_t level, const uint8_t* rgba, uint32_t width, uint32_t height) {
     if (!recording || id < 0 || id >= MaxTextures || !textures[id].used) return;
+    const uint64_t t0 = armGetSystemTick();
     const uint32_t size = width * height * 4;
     void* cpu = NULL;
     DkGpuAddr addr = ring_alloc(size, 256, &cpu);
@@ -378,6 +396,9 @@ void siglus_gpu_texture_upload(int32_t id, uint32_t level, const uint8_t* rgba, 
     dkCmdBufCopyBufferToImage(current->cmdbuf, &src, &view, &rect, 0);
     if (temporary) defer(temporary, -1);
     textures_dirty = true;
+    total_uploads++;
+    total_upload_bytes += size;
+    total_upload_ticks += (armGetSystemTick() - t0);
 }
 
 void siglus_gpu_texture_destroy(int32_t id) {
@@ -510,6 +531,7 @@ void siglus_gpu_draw(const SiglusGpuDraw* d) {
         d->vertex_program > program_count || d->fragment_program > program_count) {
         return;
     }
+    const uint64_t t0 = armGetSystemTick();
     DkCmdBuf cmdbuf = current->cmdbuf;
     if (textures_dirty) {
         /* A texture was created or uploaded inside this pass (copies run
@@ -620,6 +642,8 @@ void siglus_gpu_draw(const SiglusGpuDraw* d) {
     };
     dkCmdBufSetScissors(cmdbuf, 0, &scissor, 1);
     dkCmdBufDraw(cmdbuf, DkPrimitive_Triangles, d->vertex_count, 1, 0, 0);
+    total_draws++;
+    total_draw_ticks += (armGetSystemTick() - t0);
 }
 
 void siglus_gpu_end_frame(bool present) {
