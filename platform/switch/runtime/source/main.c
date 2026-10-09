@@ -1,3 +1,5 @@
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,14 +16,14 @@
 // which it allocates from the same heap.
 
 enum {
-    // A 20 ms buffer and six queued buffers tolerate decode/GPU stalls of up
-    // to roughly 120 ms without audren underflowing. The old 4 × 10 ms queue
-    // was audible as periodic crackle whenever Ryujinx stalled a frame.
+    // A 20 ms buffer and eight queued buffers (160 ms total) fed by a dedicated
+    // high-priority thread on Core 2 tolerate decode/GPU/SD stalls without
+    // audren underflowing.
     AudioBufferFrames = 960,
-    AudioBufferCount = 6,
+    AudioBufferCount = 8,
     // audrv memory pools must begin and end on page boundaries. Each active
     // buffer still submits only AudioBufferFrames; this tail makes every slot
-    // exactly one 4 KiB page, for a 24 KiB pool.
+    // exactly one 4 KiB page, for a 32 KiB pool.
     AudioBufferStorageFrames = 1024,
 };
 static AudioDriver audio_driver;
@@ -30,6 +32,10 @@ static int16_t audio_buffers[AudioBufferCount][AudioBufferStorageFrames * 2]
     __attribute__((aligned(0x1000)));
 static bool audio_renderer_initialized;
 static bool audio_driver_initialized;
+static Thread audio_pump_thread;
+static bool audio_pump_thread_started;
+static atomic_bool audio_pump_thread_stop;
+static atomic_uint_fast64_t audio_pump_ticks_acc;
 
 /* Rust owns the existing SiglusHost/SceneVm.  libnx owns the process and
  * presentation lifetime; no desktop event loop or WGPU object is involved. */
@@ -72,6 +78,8 @@ extern Result __real_nvMapCreate(NvMap* map, void* cpu_address, u32 size,
                                  u32 alignment, NvKind kind, bool cached);
 extern Result __real_nvAddressSpaceMap(NvAddressSpace* address_space, u32 handle,
                                        bool cached, NvKind kind, iova_t* output);
+extern int __real_pthread_create(pthread_t* thread, const pthread_attr_t* attr,
+                                 void* (*start_routine)(void*), void* arg);
 
 Result __wrap_nvMapCreate(NvMap* map, void* cpu_address, u32 size, u32 alignment,
                           NvKind kind, bool cached) {
@@ -86,6 +94,56 @@ Result __wrap_nvAddressSpaceMap(NvAddressSpace* address_space, u32 handle,
     Result rc = __real_nvAddressSpaceMap(address_space, handle, cached, kind, output);
     if (R_FAILED(rc)) log_startup_result("nvAddressSpaceMap", rc);
     return rc;
+}
+
+typedef struct {
+    void* (*start_routine)(void*);
+    void* arg;
+    int32_t preferred_core;
+} WrappedPthreadStart;
+
+static atomic_uint wrapped_pthread_seq = 0;
+
+static void* wrapped_pthread_entry(void* raw_ctx) {
+    WrappedPthreadStart* ctx = (WrappedPthreadStart*) raw_ctx;
+    void* (*start_routine)(void*) = ctx->start_routine;
+    void* arg = ctx->arg;
+    const int32_t preferred_core = ctx->preferred_core;
+    free(ctx);
+
+    /* libnx's default pthread_create pins every thread to Core 0 at priority
+     * 0x2C, and Horizon never migrates threads across cores unless allowed by
+     * their core mask. Move spawned Rust threads (such as Kira's DecodeScheduler
+     * and movie/audio workers) onto Core 1 & Core 2 so they never contend with
+     * the main VM/GPU thread on Core 0. */
+    svcSetThreadCoreMask(CUR_THREAD_HANDLE, preferred_core, (1U << 1) | (1U << 2));
+    svcSetThreadPriority(CUR_THREAD_HANDLE, 0x28);
+    return start_routine(arg);
+}
+
+int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr,
+                          void* (*start_routine)(void*), void* arg) {
+    WrappedPthreadStart* ctx = (WrappedPthreadStart*) malloc(sizeof(WrappedPthreadStart));
+    if (ctx == NULL) {
+        return __real_pthread_create(thread, attr, start_routine, arg);
+    }
+    const unsigned seq = atomic_fetch_add_explicit(&wrapped_pthread_seq, 1U, memory_order_relaxed);
+    ctx->start_routine = start_routine;
+    ctx->arg = arg;
+    ctx->preferred_core = (seq & 1U) ? 1 : 2;
+    const int rc = __real_pthread_create(thread, attr, wrapped_pthread_entry, ctx);
+    if (rc != 0) {
+        free(ctx);
+    }
+    return rc;
+}
+
+void siglus_switch_configure_worker_thread(void) {
+    /* Heavy background video/voice decode workers run at lower priority (0x34)
+     * than Kira's DecodeScheduler (0x28) and the dedicated audren pump thread
+     * (0x20), preferring Core 1 while still permitted to spill onto Core 2. */
+    svcSetThreadCoreMask(CUR_THREAD_HANDLE, 1, (1U << 1) | (1U << 2));
+    svcSetThreadPriority(CUR_THREAD_HANDLE, 0x34);
 }
 
 static const char* select_game_root(void) {
@@ -113,6 +171,37 @@ long getrandom(void* buffer, size_t length, unsigned int flags) {
 long sysconf(int name) {
     (void) name;
     return 4096;
+}
+
+static void pump_audio(void) {
+    if (!audio_driver_initialized) return;
+    for (unsigned i = 0; i < AudioBufferCount; ++i) {
+        AudioDriverWaveBuf* wavebuf = &audio_wavebufs[i];
+        if (wavebuf->state != AudioDriverWaveBufState_Free &&
+            wavebuf->state != AudioDriverWaveBufState_Done) continue;
+        siglus_switch_audio_render_i16(audio_buffers[i], AudioBufferFrames);
+        armDCacheFlush(audio_buffers[i], sizeof(audio_buffers[i]));
+        wavebuf->data_raw = audio_buffers[i];
+        wavebuf->size = (size_t) AudioBufferFrames * 2 * sizeof(int16_t);
+        wavebuf->start_sample_offset = 0;
+        wavebuf->end_sample_offset = AudioBufferFrames;
+        wavebuf->is_looping = false;
+        audrvVoiceAddWaveBuf(&audio_driver, 0, wavebuf);
+    }
+    audrvUpdate(&audio_driver);
+}
+
+static void audio_pump_thread_main(void* unused) {
+    (void) unused;
+    while (!atomic_load_explicit(&audio_pump_thread_stop, memory_order_relaxed)) {
+        const uint64_t t0 = armGetSystemTick();
+        pump_audio();
+        const uint64_t t1 = armGetSystemTick();
+        atomic_fetch_add_explicit(&audio_pump_ticks_acc, t1 - t0, memory_order_relaxed);
+        /* Poll every 4 ms (one fifth of a 20 ms wavebuf) on Core 2 so audren
+         * never starves when Core 0 is busy with scene loading or save I/O. */
+        svcSleepThread(4000000ULL);
+    }
 }
 
 static void initialize_audio(void) {
@@ -177,27 +266,31 @@ static void initialize_audio(void) {
         return;
     }
     siglus_switch_log_message("siglus_switch: audio-ready\n");
-}
 
-static void pump_audio(void) {
-    if (!audio_driver_initialized) return;
-    for (unsigned i = 0; i < AudioBufferCount; ++i) {
-        AudioDriverWaveBuf* wavebuf = &audio_wavebufs[i];
-        if (wavebuf->state != AudioDriverWaveBufState_Free &&
-            wavebuf->state != AudioDriverWaveBufState_Done) continue;
-        siglus_switch_audio_render_i16(audio_buffers[i], AudioBufferFrames);
-        armDCacheFlush(audio_buffers[i], sizeof(audio_buffers[i]));
-        wavebuf->data_raw = audio_buffers[i];
-        wavebuf->size = (size_t) AudioBufferFrames * 2 * sizeof(int16_t);
-        wavebuf->start_sample_offset = 0;
-        wavebuf->end_sample_offset = AudioBufferFrames;
-        wavebuf->is_looping = false;
-        audrvVoiceAddWaveBuf(&audio_driver, 0, wavebuf);
+    atomic_store_explicit(&audio_pump_thread_stop, false, memory_order_relaxed);
+    const Result thread_rc = threadCreate(&audio_pump_thread, audio_pump_thread_main, NULL,
+                                          NULL, 64 * 1024, 0x20, 2);
+    if (R_SUCCEEDED(thread_rc)) {
+        const Result start_thread_rc = threadStart(&audio_pump_thread);
+        if (R_SUCCEEDED(start_thread_rc)) {
+            audio_pump_thread_started = true;
+            siglus_switch_log_message("siglus_switch: audio-thread-started core=2 prio=0x20\n");
+        } else {
+            log_startup_result("threadStart(audio)", start_thread_rc);
+            threadClose(&audio_pump_thread);
+        }
+    } else {
+        log_startup_result("threadCreate(audio)", thread_rc);
     }
-    audrvUpdate(&audio_driver);
 }
 
 static void exit_audio(void) {
+    if (audio_pump_thread_started) {
+        atomic_store_explicit(&audio_pump_thread_stop, true, memory_order_relaxed);
+        threadWaitForExit(&audio_pump_thread);
+        threadClose(&audio_pump_thread);
+        audio_pump_thread_started = false;
+    }
     if (audio_driver_initialized) audrvClose(&audio_driver);
     if (audio_renderer_initialized) audrenExit();
 }
@@ -281,10 +374,12 @@ int main(void) {
         const uint64_t t1 = armGetSystemTick();
         if (first_frame) siglus_switch_log_message("siglus_switch: first-frame step complete\n");
         /* The engine step rendered and presented the frame. */
-        pump_audio();
-        const uint64_t t2 = armGetSystemTick();
+        if (!audio_pump_thread_started) {
+            pump_audio();
+            const uint64_t t2 = armGetSystemTick();
+            audio_ticks_acc += (t2 - t1);
+        }
         step_ticks_acc += (t1 - t0);
-        audio_ticks_acc += (t2 - t1);
         first_frame = false;
         if (++frame_count % 600 == 0) {
             const uint64_t now = armGetSystemTick();
@@ -301,8 +396,11 @@ int main(void) {
             uint64_t pump_us = 0, tick_us = 0, build_us = 0, render_us = 0;
             siglus_switch_get_phase_stats(&pump_us, &tick_us, &build_us, &render_us);
 
+            const uint64_t total_audio_ticks = audio_pump_thread_started
+                ? atomic_exchange_explicit(&audio_pump_ticks_acc, 0, memory_order_relaxed)
+                : audio_ticks_acc;
             const double step_ms = ((double) step_ticks_acc / freq / 600.0) * 1000.0;
-            const double audio_ms = ((double) audio_ticks_acc / freq / 600.0) * 1000.0;
+            const double audio_ms = ((double) total_audio_ticks / freq / 600.0) * 1000.0;
             const double fence_ms = ((double) fence_ticks / freq / 600.0) * 1000.0;
             const double acq_ms = ((double) acq_ticks / freq / 600.0) * 1000.0;
             const double draw_ms = ((double) draw_ticks / freq / 600.0) * 1000.0;

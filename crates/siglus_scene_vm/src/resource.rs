@@ -297,8 +297,15 @@ fn cached_directory_entry(
         if let Some(entry) = cached_entry {
             return Ok(Some(entry));
         }
-        if has_index && directory_modified(parent) == cached_modified {
-            return Ok(None);
+        if has_index {
+            #[cfg(target_os = "horizon")]
+            {
+                return Ok(None);
+            }
+            #[cfg(not(target_os = "horizon"))]
+            if directory_modified(parent) == cached_modified {
+                return Ok(None);
+            }
         }
     }
 
@@ -307,7 +314,16 @@ fn cached_directory_entry(
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let cache = guard.get_or_insert_with(NativePathResolverCache::default);
-        cache.directories.remove(&parent_key);
+        // Cache missing directory as an empty index so repeated probes for
+        // non-existent subfolders (e.g. `koe/0001`) do not hit the SD card on
+        // every voice lookup.
+        cache.directories.insert(
+            parent_key,
+            DirectoryCaseIndex {
+                modified: None,
+                entries: HashMap::new(),
+            },
+        );
         return Ok(None);
     };
     let result = index.entries.get(&folded).cloned();
@@ -330,15 +346,22 @@ fn resolve_cached_directory_entry(parent: &Path, requested: &OsStr) -> Result<Op
         match entry {
             FoldedDirectoryEntry::Unique(actual_name) => {
                 let candidate = parent.join(actual_name);
-                if candidate.exists() {
+                #[cfg(target_os = "horizon")]
+                {
                     return Ok(Some(candidate));
                 }
-                if refreshed {
-                    return Ok(None);
+                #[cfg(not(target_os = "horizon"))]
+                {
+                    if candidate.exists() {
+                        return Ok(Some(candidate));
+                    }
+                    if refreshed {
+                        return Ok(None);
+                    }
+                    // The directory changed after it was indexed.  Rebuild once;
+                    // this is also the external-mutation fallback for stale hits.
+                    refreshed = true;
                 }
-                // The directory changed after it was indexed.  Rebuild once;
-                // this is also the external-mutation fallback for stale hits.
-                refreshed = true;
             }
             FoldedDirectoryEntry::Conflict(names) => {
                 bail!(
@@ -376,6 +399,36 @@ fn positive_file_cache_insert(path: &Path, resolved: &Path) {
     cache.positive_files.insert(key, resolved.to_path_buf());
 }
 
+/// Record a newly written or updated file in the resolver cache without
+/// invalidating the entire parent directory (e.g., `savedata`).
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+pub(crate) fn record_game_file_written(path: &Path) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let Some(file_name) = path.file_name() else {
+        return;
+    };
+    let parent_key = native_cache_key(parent);
+    let path_key = native_cache_key(path);
+    let folded = fold_windows_component(file_name);
+
+    let mut guard = NATIVE_PATH_RESOLVER_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let cache = guard.get_or_insert_with(NativePathResolverCache::default);
+    cache.positive_files.insert(path_key.clone(), path_key);
+    if let Some(index) = cache.directories.get_mut(&parent_key) {
+        index.entries.insert(
+            folded,
+            FoldedDirectoryEntry::Unique(file_name.to_os_string()),
+        );
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+pub(crate) fn record_game_file_written(_path: &Path) {}
+
 /// Invalidate resolver state for a file/directory that was created, removed or
 /// renamed by the engine.  External mutations are detected lazily from parent
 /// directory metadata on misses/stale directory hits; engine-owned writes use
@@ -390,19 +443,21 @@ pub(crate) fn invalidate_game_path_cache(path: &Path) {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let cache = guard.get_or_insert_with(NativePathResolverCache::default);
+    if let Some(file_name) = path.file_name() {
+        let folded = fold_windows_component(file_name);
+        if let Some(index) = cache.directories.get_mut(&parent_key) {
+            index.entries.remove(&folded);
+        }
+    }
     cache
         .directories
-        .retain(|dir, _| dir != &parent_key && dir != &path_key && !dir.starts_with(&path_key));
+        .retain(|dir, _| dir != &path_key && !dir.starts_with(&path_key));
     cache.positive_files.retain(|requested, resolved| {
         if requested == &path_key || requested.starts_with(&path_key) {
             return false;
         }
         let resolved_key = native_cache_key(resolved);
-        let requested_parent = requested.parent();
-        let resolved_parent = resolved_key.parent();
-        requested_parent != Some(parent_key.as_path())
-            && resolved_parent != Some(parent_key.as_path())
-            && !resolved_key.starts_with(&path_key)
+        resolved_key != path_key && !resolved_key.starts_with(&path_key)
     });
 }
 
@@ -468,13 +523,31 @@ pub(crate) fn resolve_windows_case_insensitive_file(path: &Path) -> Result<Optio
         return Ok(wasm_path_is_file(path).then_some(path.to_path_buf()));
     }
 
-    // libnx's fsdev mount accepts `sdmc:` paths through open(2), but this
-    // custom Horizon std target currently reports false from metadata/is_file
-    // for those same paths. Verify the exact shipped filename by opening it;
-    // desktop targets retain the case-insensitive directory resolver below.
+    // On Horizon, `metadata`/`is_file` on `sdmc:` paths has quirks in the
+    // custom target, so use `NATIVE_PATH_RESOLVER_CACHE` (positive file cache +
+    // cached `fs::read_dir` index on the parent directory) before falling back
+    // to `File::open`. This avoids hundreds of uncached SD card `open()` syscalls
+    // per scene transition and Save Menu open.
     #[cfg(target_os = "horizon")]
     {
-        return Ok(std::fs::File::open(path).ok().map(|_| path.to_path_buf()));
+        if let Some(cached) = positive_file_cache_get(path) {
+            return Ok(Some(cached));
+        }
+        if let (Some(parent), Some(file_name)) = (path.parent(), path.file_name())
+            && !parent.as_os_str().is_empty()
+        {
+            if let Ok(Some(resolved)) = resolve_cached_directory_entry(parent, file_name) {
+                positive_file_cache_insert(path, &resolved);
+                return Ok(Some(resolved));
+            }
+            return Ok(None);
+        }
+        if std::fs::File::open(path).is_ok() {
+            let resolved = path.to_path_buf();
+            positive_file_cache_insert(path, &resolved);
+            return Ok(Some(resolved));
+        }
+        return Ok(None);
     }
 
     #[cfg(all(

@@ -32,18 +32,22 @@ const MPEG_AUDIO_SEEK_INITIAL_BACKTRACK_BYTES: u64 = 512 * 1024;
 const MPEG_AUDIO_SEEK_MAX_PRIME_BYTES: u64 = 16 * 1024 * 1024;
 const MPEG_VIDEO_SEEK_BACKTRACK_BYTES: u64 = 8 * 1024 * 1024;
 const MPEG_VIDEO_SEEK_FORWARD_PROBE_BYTES: u64 = 1024 * 1024;
-#[cfg(not(target_os = "vita"))]
+#[cfg(not(any(target_os = "vita", target_os = "horizon")))]
 const MPEG2_STREAM_CHANNEL_CAPACITY: usize = 4;
+#[cfg(target_os = "horizon")]
+const MPEG2_STREAM_CHANNEL_CAPACITY: usize = 2;
 #[cfg(target_os = "vita")]
 const MPEG2_STREAM_CHANNEL_CAPACITY: usize = 1;
 const MPEG2_STREAM_MAX_DRAIN_EVENTS: usize = 8;
-#[cfg(not(target_os = "vita"))]
+#[cfg(not(any(target_os = "vita", target_os = "horizon")))]
 const MPEG2_STREAM_FRAME_KEEP: usize = 6;
+#[cfg(target_os = "horizon")]
+const MPEG2_STREAM_FRAME_KEEP: usize = 2;
 #[cfg(target_os = "vita")]
 const MPEG2_STREAM_FRAME_KEEP: usize = 1;
-#[cfg(not(target_os = "vita"))]
+#[cfg(not(any(target_os = "vita", target_os = "horizon")))]
 const MPEG2_STREAM_DECODE_LEAD_FRAMES: usize = 3;
-#[cfg(target_os = "vita")]
+#[cfg(any(target_os = "vita", target_os = "horizon"))]
 const MPEG2_STREAM_DECODE_LEAD_FRAMES: usize = 1;
 // Desktop OMV queues: a few frames of lead are enough for a desktop CPU
 // (decoding a 1920x1440 frame takes a few milliseconds), and each frame is
@@ -51,7 +55,7 @@ const MPEG2_STREAM_DECODE_LEAD_FRAMES: usize = 1;
 #[cfg(not(any(target_os = "horizon", target_os = "vita")))]
 const OMV_STREAM_CHANNEL_CAPACITY: usize = 4;
 #[cfg(target_os = "horizon")]
-const OMV_STREAM_CHANNEL_CAPACITY: usize = 4;
+const OMV_STREAM_CHANNEL_CAPACITY: usize = 2;
 #[cfg(target_os = "vita")]
 const OMV_STREAM_CHANNEL_CAPACITY: usize = 1;
 #[cfg(not(any(target_os = "horizon", target_os = "vita")))]
@@ -61,42 +65,47 @@ const OMV_STREAM_MAX_DRAIN_EVENTS: usize = 8;
 #[cfg(not(any(target_os = "horizon", target_os = "vita")))]
 const OMV_STREAM_FRAME_KEEP: usize = 6;
 #[cfg(target_os = "horizon")]
-const OMV_STREAM_FRAME_KEEP: usize = 6;
+const OMV_STREAM_FRAME_KEEP: usize = 2;
 #[cfg(target_os = "vita")]
 const OMV_STREAM_FRAME_KEEP: usize = 1;
-#[cfg(not(any(target_os = "vita", feature = "virtual-clock")))]
+#[cfg(not(any(target_os = "vita", target_os = "horizon", feature = "virtual-clock")))]
 const OMV_STREAM_DECODE_LEAD_FRAMES: usize = 2;
 /// Virtual-clock replays decode no frame ahead, so the frame on screen does
 /// not depend on how fast the decoder thread ran.
-#[cfg(all(not(target_os = "vita"), feature = "virtual-clock"))]
+#[cfg(all(not(any(target_os = "vita", target_os = "horizon")), feature = "virtual-clock"))]
 const OMV_STREAM_DECODE_LEAD_FRAMES: usize = 0;
-#[cfg(target_os = "vita")]
+#[cfg(any(target_os = "vita", target_os = "horizon"))]
 const OMV_STREAM_DECODE_LEAD_FRAMES: usize = 1;
 // A loop restart seeks by the index and decodes again (as on consoles);
 // the few cached head frames only bridge that.
 const OMV_LOOP_HEAD_CACHE_MAX_FRAMES: usize = 4;
-#[cfg(not(target_os = "vita"))]
+#[cfg(not(any(target_os = "vita", target_os = "horizon")))]
 const OMV_LOOP_HEAD_CACHE_MAX_BYTES: usize = 8 * 1024 * 1024;
-#[cfg(target_os = "vita")]
+#[cfg(any(target_os = "vita", target_os = "horizon"))]
 const OMV_LOOP_HEAD_CACHE_MAX_BYTES: usize = 4 * 1024 * 1024;
-#[cfg(not(target_os = "vita"))]
+#[cfg(not(any(target_os = "vita", target_os = "horizon")))]
 const WMV_STREAM_CHANNEL_CAPACITY: usize = 8;
+#[cfg(target_os = "horizon")]
+const WMV_STREAM_CHANNEL_CAPACITY: usize = 2;
 #[cfg(target_os = "vita")]
 const WMV_STREAM_CHANNEL_CAPACITY: usize = 1;
 const WMV_STREAM_MAX_DRAIN_EVENTS: usize = 16;
-#[cfg(not(target_os = "vita"))]
+#[cfg(not(any(target_os = "vita", target_os = "horizon")))]
 const WMV_STREAM_FRAME_KEEP: usize = 12;
+#[cfg(target_os = "horizon")]
+const WMV_STREAM_FRAME_KEEP: usize = 3;
 #[cfg(target_os = "vita")]
 const WMV_STREAM_FRAME_KEEP: usize = 2;
-#[cfg(not(target_os = "vita"))]
+#[cfg(not(any(target_os = "vita", target_os = "horizon")))]
 const WMV_STREAM_DECODE_LEAD_MS: usize = 750;
+#[cfg(target_os = "horizon")]
+const WMV_STREAM_DECODE_LEAD_MS: usize = 200;
 #[cfg(target_os = "vita")]
 const WMV_STREAM_DECODE_LEAD_MS: usize = 150;
 
-/// Movie decoding runs below the game thread on PS Vita: with several
-/// 1080p OMV streams (GameData's title menu) the decoders took cores the
-/// script and renderer needed, and a late movie frame costs less than a
-/// late game frame.
+/// Movie decoding runs below the game and audio threads on PS Vita and Switch:
+/// with several 1080p OMV/WMV streams the decoders would otherwise contend with
+/// script execution, Kira's audio DecodeScheduler, and rendering.
 fn lower_worker_thread_priority() {
     #[cfg(target_os = "vita")]
     unsafe {
@@ -110,6 +119,13 @@ fn lower_worker_thread_priority() {
             // User priorities run from 64 (most urgent) to 191.
             sceKernelChangeThreadPriority(sceKernelGetThreadId(), (current + 16).min(191));
         }
+    }
+    #[cfg(target_os = "horizon")]
+    unsafe {
+        unsafe extern "C" {
+            fn siglus_switch_configure_worker_thread();
+        }
+        siglus_switch_configure_worker_thread();
     }
 }
 
@@ -231,8 +247,8 @@ struct Mpeg2StreamState {
     audio: Option<MovieAudio>,
     decoded_any_this_poll: bool,
     request_frames: Arc<AtomicUsize>,
-    /// Engine frames since this stream was last polled (Vita eviction).
-    #[cfg(target_os = "vita")]
+    /// Engine frames since this stream was last polled (console eviction).
+    #[cfg(any(target_os = "vita", target_os = "horizon"))]
     idle_frames: u32,
 }
 
@@ -293,8 +309,8 @@ struct WmvStreamState {
     audio: Option<MovieAudio>,
     decoded_any_this_poll: bool,
     request_ms: Arc<AtomicUsize>,
-    /// Engine frames since this stream was last polled (Vita eviction).
-    #[cfg(target_os = "vita")]
+    /// Engine frames since this stream was last polled (console eviction).
+    #[cfg(any(target_os = "vita", target_os = "horizon"))]
     idle_frames: u32,
 }
 
@@ -362,8 +378,8 @@ struct OmvStreamState {
     /// again; serving its fast-catch-up tail would flash stale dark head
     /// frames. Hold this frame until the stream catches back up.
     held_frame: Option<(usize, Arc<RgbaImage>)>,
-    /// Engine frames since this stream was last polled (Vita eviction).
-    #[cfg(target_os = "vita")]
+    /// Engine frames since this stream was last polled (console eviction).
+    #[cfg(any(target_os = "vita", target_os = "horizon"))]
     idle_frames: u32,
 }
 
@@ -443,7 +459,7 @@ impl MovieManager {
     /// wall time: a frame that stalls for seconds (card writes, the
     /// emulator compiling code) must not evict the movie playing now, which
     /// then restarts from a seek and on a slow decoder never catches up.
-    #[cfg(target_os = "vita")]
+    #[cfg(any(target_os = "vita", target_os = "horizon"))]
     pub fn evict_idle_streams(&mut self) {
         const IDLE_FRAMES: u32 = 120;
         let old_mpeg_count = self.mpeg2_streams.len();
@@ -601,11 +617,11 @@ impl MovieManager {
         self.wmv_streams.clear();
         self.wmv_audio_tasks.clear();
         self.omv_streams.clear();
-        #[cfg(target_os = "vita")]
+        #[cfg(any(target_os = "vita", target_os = "horizon"))]
         {
-            // The desktop cache favors replay latency. On Vita, retaining
-            // decoded frames and whole-track PCM after playback can exhaust
-            // user memory as the scenario visits more movies.
+            // The desktop cache favors replay latency. On Vita and Switch,
+            // retaining decoded frames and whole-track PCM after playback can
+            // exhaust user memory as the scenario visits more movies.
             self.cache.clear();
             self.preview_cache.clear();
             self.decode_tasks.clear();
@@ -936,7 +952,7 @@ impl MovieManager {
             .mpeg2_streams
             .get_mut(&path)
             .expect("mpeg2 stream state exists");
-        #[cfg(target_os = "vita")]
+        #[cfg(any(target_os = "vita", target_os = "horizon"))]
         {
             state.idle_frames = 0;
         }
@@ -1116,7 +1132,7 @@ impl MovieManager {
             .wmv_streams
             .get_mut(&path)
             .expect("wmv stream state exists");
-        #[cfg(target_os = "vita")]
+        #[cfg(any(target_os = "vita", target_os = "horizon"))]
         {
             state.idle_frames = 0;
         }
@@ -1296,7 +1312,7 @@ impl MovieManager {
             .omv_streams
             .get_mut(&path)
             .expect("omv stream state exists");
-        #[cfg(target_os = "vita")]
+        #[cfg(any(target_os = "vita", target_os = "horizon"))]
         {
             state.idle_frames = 0;
         }
@@ -1321,7 +1337,7 @@ impl MovieManager {
             state,
             desired_before_drain,
             false,
-            !cfg!(target_os = "vita"),
+            !cfg!(any(target_os = "vita", target_os = "horizon")),
         )?;
         #[cfg(feature = "virtual-clock")]
         if let Some(desired) = desired_before_drain {
@@ -1710,7 +1726,7 @@ fn spawn_mpeg2_stream_state(
         audio,
         decoded_any_this_poll: false,
         request_frames,
-        #[cfg(target_os = "vita")]
+        #[cfg(any(target_os = "vita", target_os = "horizon"))]
         idle_frames: 0,
     })
 }
@@ -1935,7 +1951,7 @@ fn stream_mpeg2_video_worker(
     let mut buf = vec![0u8; MPEG2_STREAM_CHUNK_BYTES];
     let mut frame_idx = initial_frame_idx;
     let mut send_failed = false;
-    #[cfg(target_os = "vita")]
+    #[cfg(any(target_os = "vita", target_os = "horizon"))]
     let mut sent_video = false;
 
     loop {
@@ -1955,7 +1971,7 @@ fn stream_mpeg2_video_worker(
                     send_failed = true;
                     return;
                 }
-                #[cfg(target_os = "vita")]
+                #[cfg(any(target_os = "vita", target_os = "horizon"))]
                 if sent_video
                     && vita_mpeg_frame_is_late(
                         f.pts_90k,
@@ -1990,7 +2006,7 @@ fn stream_mpeg2_video_worker(
                 if tx.send(Ok(ev)).is_err() {
                     send_failed = true;
                 } else {
-                    #[cfg(target_os = "vita")]
+                    #[cfg(any(target_os = "vita", target_os = "horizon"))]
                     {
                         sent_video = true;
                     }
@@ -2011,7 +2027,7 @@ fn stream_mpeg2_video_worker(
             send_failed = true;
             return;
         }
-        #[cfg(target_os = "vita")]
+        #[cfg(any(target_os = "vita", target_os = "horizon"))]
         if sent_video
             && vita_mpeg_frame_is_late(
                 f.pts_90k,
@@ -2052,7 +2068,7 @@ fn stream_mpeg2_video_worker(
     Ok(())
 }
 
-#[cfg(target_os = "vita")]
+#[cfg(any(target_os = "vita", target_os = "horizon"))]
 fn vita_mpeg_frame_is_late(
     pts_90k: Option<i64>,
     origin_90k: Option<i64>,
@@ -2340,7 +2356,7 @@ fn spawn_wmv_stream_state(
         audio,
         decoded_any_this_poll: false,
         request_ms,
-        #[cfg(target_os = "vita")]
+        #[cfg(any(target_os = "vita", target_os = "horizon"))]
         idle_frames: 0,
     })
 }
@@ -2375,27 +2391,39 @@ fn stream_wmv_video_worker(
         );
     }
 
+    let mut pool = OmvFramePool::default();
     let mut frame_idx = 0usize;
+    let mut min_source_pts_ms: Option<u64> = None;
+    let mut sent_frames = 0usize;
     loop {
-        // The bounded channel is the decode-ahead/backpressure mechanism.  Do
-        // not gate decoding on the current presentation clock here: WMV3/VC-1
-        // B pictures are decoded in coded order, so a future P anchor can have
-        // a later PTS than B pictures which have not been decoded yet.  Waiting
-        // on that anchor's PTS before decoding the following B pictures can
-        // stall presentation.  This matches the standalone WMV player: decode
-        // continuously into a small bounded queue, then order/present by PTS on
-        // the consumer side.  request_ms is retained only as the cancellation
-        // sentinel used by WmvStreamState::drop().
-        if request_ms.load(Ordering::Acquire) == usize::MAX {
+        let req = request_ms.load(Ordering::Acquire);
+        if req == usize::MAX {
             return Ok(());
         }
+        let current_timer_ms = (req as u64).saturating_sub(WMV_STREAM_DECODE_LEAD_MS as u64);
         let decoded = decoder
-            .next_frame()
+            .next_frame_with(|pts_ms, _is_key, yuv, vis_w, vis_h| {
+                let source_pts_ms = pts_ms as u64;
+                let origin = *min_source_pts_ms.get_or_insert(source_pts_ms);
+                if source_pts_ms < origin {
+                    min_source_pts_ms = Some(source_pts_ms);
+                }
+                let origin_ms = min_source_pts_ms.unwrap_or(source_pts_ms);
+                let rel_pts_ms = source_pts_ms.saturating_sub(origin_ms);
+                // Once initial frames have established the consumer timeline origin,
+                // skip the expensive YUV->RGBA conversion and channel send if this
+                // frame is already >120 ms behind the presentation clock (since
+                // discard_wmv_stream_frames would drop it immediately on receipt).
+                if sent_frames >= 2 && rel_pts_ms.saturating_add(120) < current_timer_ms {
+                    return (source_pts_ms, None);
+                }
+                let frame = wmv_yuv_frame_to_rgba_pooled(yuv, vis_w, vis_h, &mut pool);
+                (source_pts_ms, Some(frame))
+            })
             .with_context(|| format!("decode WMV video: {}", path.display()))?;
-        let Some(decoded) = decoded else {
+        let Some((source_pts_ms, maybe_frame)) = decoded else {
             break;
         };
-        let source_pts_ms = decoded.pts_ms as u64;
 
         if trace && (frame_idx < 5 || frame_idx.is_multiple_of(60)) {
             eprintln!(
@@ -2404,16 +2432,18 @@ fn stream_wmv_video_worker(
             );
         }
 
-        let frame = Arc::new(wmv_yuv_frame_to_rgba(&decoded.frame));
-        if tx
-            .send(Ok(WmvStreamEvent::Video {
-                frame_idx,
-                source_pts_ms,
-                frame,
-            }))
-            .is_err()
-        {
-            return Ok(());
+        if let Some(frame) = maybe_frame {
+            if tx
+                .send(Ok(WmvStreamEvent::Video {
+                    frame_idx,
+                    source_pts_ms,
+                    frame,
+                }))
+                .is_err()
+            {
+                return Ok(());
+            }
+            sent_frames = sent_frames.saturating_add(1);
         }
         frame_idx = frame_idx.saturating_add(1);
     }
@@ -2589,6 +2619,37 @@ fn wmv_yuv_frame_to_rgba(frame: &wmv_decoder::YuvFrame) -> RgbaImage {
     }
 }
 
+fn wmv_yuv_frame_to_rgba_pooled(
+    frame: &wmv_decoder::YuvFrame,
+    visible_width: u32,
+    visible_height: u32,
+    pool: &mut OmvFramePool,
+) -> Arc<RgbaImage> {
+    let (output_width, output_height) = movie_output_dimensions(visible_width, visible_height);
+    let mut out = pool.take().unwrap_or_else(|| {
+        Arc::new(RgbaImage {
+            width: 0,
+            height: 0,
+            center_x: 0,
+            center_y: 0,
+            rgba: Vec::new(),
+        })
+    });
+    let image = Arc::get_mut(&mut out).expect("a pooled frame is held only by the pool");
+    wmv_decoder::yuv420p_to_rgba_scaled_into(
+        frame,
+        visible_width,
+        visible_height,
+        output_width,
+        output_height,
+        &mut image.rgba,
+    );
+    image.width = output_width;
+    image.height = output_height;
+    pool.track(&out);
+    out
+}
+
 fn spawn_omv_stream_state(path: PathBuf) -> Result<OmvStreamState> {
     let (tx, rx) = mpsc::sync_channel(OMV_STREAM_CHANNEL_CAPACITY);
     let request_frame = Arc::new(AtomicUsize::new(0));
@@ -2618,7 +2679,7 @@ fn spawn_omv_stream_state(path: PathBuf) -> Result<OmvStreamState> {
         last_served_frame_idx: 0,
         last_effective_timer_ms: 0,
         held_frame: None,
-        #[cfg(target_os = "vita")]
+        #[cfg(any(target_os = "vita", target_os = "horizon"))]
         idle_frames: 0,
     })
 }
@@ -3818,6 +3879,23 @@ fn convert_movie_audio_chunk_to_frames(
     let src_frames = samples.len() / src_channels;
     if src_frames == 0 {
         return Vec::new();
+    }
+    if src_sample_rate == dst_sample_rate {
+        let mut out = Vec::with_capacity(src_frames);
+        if src_channels == 1 {
+            for &s in &samples[..src_frames] {
+                out.push(Frame::new(s, s));
+            }
+        } else if src_channels == 2 {
+            for pair in samples[..src_frames * 2].chunks_exact(2) {
+                out.push(Frame::new(pair[0], pair[1]));
+            }
+        } else {
+            for chunk in samples[..src_frames * src_channels].chunks_exact(src_channels) {
+                out.push(Frame::new(chunk[0], chunk[1]));
+            }
+        }
+        return out;
     }
     let dst_frames = ((src_frames as u128) * (dst_sample_rate as u128) / (src_sample_rate as u128))
         .max(1) as usize;

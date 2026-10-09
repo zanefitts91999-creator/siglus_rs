@@ -1118,10 +1118,24 @@ pub fn write_header_in_place(path: &Path, header: &OriginalSaveHeader) -> Result
         }
         data[..header.header_size()].copy_from_slice(&header.to_bytes());
         fs::write(path, data).with_context(|| format!("write save file {}", path.display()))?;
-        crate::resource::invalidate_game_path_cache(path);
+        crate::resource::record_game_file_written(path);
         Ok(())
     }
 }
+
+#[derive(Default)]
+struct CachedGlobalSavePayloads {
+    global_stream: Option<(PathBuf, Vec<u8>)>,
+    config_stream: Option<(PathBuf, Vec<u8>)>,
+    read_stream: Option<(PathBuf, Vec<u8>)>,
+}
+
+static CACHED_GLOBAL_SAVE_PAYLOADS: std::sync::Mutex<CachedGlobalSavePayloads> =
+    std::sync::Mutex::new(CachedGlobalSavePayloads {
+        global_stream: None,
+        config_stream: None,
+        read_stream: None,
+    });
 
 pub fn write_local_save_file(
     path: &Path,
@@ -1138,7 +1152,7 @@ pub fn write_local_save_file(
             .with_context(|| format!("create save dir {}", parent.display()))?;
     }
     fs::write(path, out).with_context(|| format!("write save file {}", path.display()))?;
-    crate::resource::invalidate_game_path_cache(path);
+    crate::resource::record_game_file_written(path);
     Ok(())
 }
 
@@ -1212,13 +1226,24 @@ fn read_split_local_save(
 }
 
 pub fn write_global_save_file(project_dir: &Path, global_stream: &[u8]) -> Result<()> {
+    let path = save_dir(project_dir).join("global.sav");
+    {
+        let guard = CACHED_GLOBAL_SAVE_PAYLOADS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((cached_path, cached_bytes)) = guard.global_stream.as_ref()
+            && cached_path == &path
+            && cached_bytes.as_slice() == global_stream
+        {
+            return Ok(());
+        }
+    }
     let packed = pack_buffer(global_stream);
     let header = OriginalGlobalSaveHeader {
         major_version: 2,
         minor_version: 0,
         global_data_size: packed.len() as i32,
     };
-    let path = save_dir(project_dir).join("global.sav");
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("create save dir {}", parent.display()))?;
@@ -1226,7 +1251,10 @@ pub fn write_global_save_file(project_dir: &Path, global_stream: &[u8]) -> Resul
     let mut out = header.to_bytes();
     out.extend_from_slice(&packed);
     fs::write(&path, out).with_context(|| format!("write global save file {}", path.display()))?;
-    crate::resource::invalidate_game_path_cache(&path);
+    crate::resource::record_game_file_written(&path);
+    if let Ok(mut guard) = CACHED_GLOBAL_SAVE_PAYLOADS.lock() {
+        guard.global_stream = Some((path, global_stream.to_vec()));
+    }
     Ok(())
 }
 
@@ -1265,8 +1293,20 @@ pub fn write_read_save_file(project_dir: &Path, scene_rows: &[(String, Vec<u8>)]
         stream.push_i32(flags.len().min(i32::MAX as usize) as i32);
         stream.push_raw(flags);
     }
-    let packed = pack_buffer(&stream.into_inner());
+    let raw_stream = stream.into_inner();
     let path = save_dir(project_dir).join("read.sav");
+    {
+        let guard = CACHED_GLOBAL_SAVE_PAYLOADS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((cached_path, cached_bytes)) = guard.read_stream.as_ref()
+            && cached_path == &path
+            && cached_bytes == &raw_stream
+        {
+            return Ok(());
+        }
+    }
+    let packed = pack_buffer(&raw_stream);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("create save dir {}", parent.display()))?;
@@ -1278,7 +1318,10 @@ pub fn write_read_save_file(project_dir: &Path, scene_rows: &[(String, Vec<u8>)]
     push_i32(&mut out, scene_rows.len().min(i32::MAX as usize) as i32);
     out.extend_from_slice(&packed);
     fs::write(&path, out).with_context(|| format!("write read save file {}", path.display()))?;
-    crate::resource::invalidate_game_path_cache(&path);
+    crate::resource::record_game_file_written(&path);
+    if let Ok(mut guard) = CACHED_GLOBAL_SAVE_PAYLOADS.lock() {
+        guard.read_stream = Some((path, raw_stream));
+    }
     Ok(())
 }
 
@@ -1336,13 +1379,24 @@ pub fn read_read_save_file(project_dir: &Path) -> Result<Vec<(String, Vec<u8>)>>
 }
 
 pub fn write_config_save_file(project_dir: &Path, config_stream: &[u8]) -> Result<()> {
+    let path = save_dir(project_dir).join("config.sav");
+    {
+        let guard = CACHED_GLOBAL_SAVE_PAYLOADS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((cached_path, cached_bytes)) = guard.config_stream.as_ref()
+            && cached_path == &path
+            && cached_bytes.as_slice() == config_stream
+        {
+            return Ok(());
+        }
+    }
     let packed = pack_buffer(config_stream);
     let header = OriginalConfigSaveHeader {
         major_version: 1,
         minor_version: 4,
         config_data_size: packed.len() as i32,
     };
-    let path = save_dir(project_dir).join("config.sav");
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("create save dir {}", parent.display()))?;
@@ -1350,7 +1404,10 @@ pub fn write_config_save_file(project_dir: &Path, config_stream: &[u8]) -> Resul
     let mut out = header.to_bytes();
     out.extend_from_slice(&packed);
     fs::write(&path, out).with_context(|| format!("write config save file {}", path.display()))?;
-    crate::resource::invalidate_game_path_cache(&path);
+    crate::resource::record_game_file_written(&path);
+    if let Ok(mut guard) = CACHED_GLOBAL_SAVE_PAYLOADS.lock() {
+        guard.config_stream = Some((path, config_stream.to_vec()));
+    }
     Ok(())
 }
 

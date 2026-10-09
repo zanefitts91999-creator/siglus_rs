@@ -345,10 +345,13 @@ uint32_t siglus_gpu_program(const char* name) {
 
 int32_t siglus_gpu_texture_create(uint32_t width, uint32_t height, uint32_t mip_levels, uint32_t flags) {
     if (width == 0 || height == 0 || mip_levels == 0) return -1;
+    static int32_t next_texture_slot = 0;
     int32_t id = -1;
-    for (int32_t i = 0; i < MaxTextures; ++i) {
-        if (!textures[i].used) {
-            id = i;
+    for (int32_t step = 0; step < MaxTextures; ++step) {
+        const int32_t candidate = (next_texture_slot + step) % MaxTextures;
+        if (!textures[candidate].used) {
+            id = candidate;
+            next_texture_slot = (candidate + 1) % MaxTextures;
             break;
         }
     }
@@ -379,7 +382,14 @@ void siglus_gpu_texture_upload(int32_t id, uint32_t level, const uint8_t* rgba, 
     const uint64_t t0 = armGetSystemTick();
     const uint32_t size = width * height * 4;
     void* cpu = NULL;
-    DkGpuAddr addr = ring_alloc(size, 256, &cpu);
+    DkGpuAddr addr = 0;
+    /* Reserve 4 MiB of the per-frame ring buffer for vertices and uniforms so
+     * heavy scene-transition texture uploads never exhaust the ring and cause
+     * siglus_gpu_draw to skip draws (which produces a 1-frame black flash). */
+    const uint32_t DrawRingReserve = 4 * 1024 * 1024;
+    if (align_up(current->ring_used, 256) + size <= RingSize - DrawRingReserve) {
+        addr = ring_alloc(size, 256, &cpu);
+    }
     DkMemBlock temporary = NULL;
     if (addr == 0) {
         temporary = make_memory(size, DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached);
@@ -393,6 +403,8 @@ void siglus_gpu_texture_upload(int32_t id, uint32_t level, const uint8_t* rgba, 
     view.mipLevelCount = 1;
     const DkCopyBuf src = { addr, 0, 0 }; /* tightly packed */
     const DkImageRect rect = { 0, 0, 0, width, height, 1 };
+    /* Wait for any earlier fragment reads of this texture before overwriting it in-place. */
+    dkCmdBufBarrier(current->cmdbuf, DkBarrier_Fragments, 0);
     dkCmdBufCopyBufferToImage(current->cmdbuf, &src, &view, &rect, 0);
     if (temporary) defer(temporary, -1);
     textures_dirty = true;
@@ -417,7 +429,7 @@ bool siglus_gpu_texture_read(int32_t id, uint8_t* rgba) {
     Texture* texture = &textures[id];
     const uint32_t size = texture->width * texture->height * 4;
     DkMemBlock staging = make_memory(size, DkMemBlockFlags_CpuCached | DkMemBlockFlags_GpuCached);
-    dkCmdBufBarrier(current->cmdbuf, DkBarrier_Fragments, DkInvalidateFlags_Image);
+    dkCmdBufBarrier(current->cmdbuf, DkBarrier_Fragments, DkInvalidateFlags_Image | DkInvalidateFlags_L2Cache);
     DkImageView view;
     dkImageViewDefaults(&view, &texture->image);
     const DkImageRect rect = { 0, 0, 0, texture->width, texture->height, 1 };
@@ -505,8 +517,11 @@ void siglus_gpu_begin_pass(int32_t target, const float* clear_color, bool clear_
         height = textures[target].height;
     }
     /* Earlier passes' targets and uploads are read from here on; new
-     * texture descriptors are visible. */
-    dkCmdBufBarrier(cmdbuf, DkBarrier_Full, DkInvalidateFlags_Image | DkInvalidateFlags_Descriptors);
+     * texture descriptors (written by CPU to CpuUncached|GpuCached memory)
+     * require L2 invalidation when textures_dirty is set. */
+    dkCmdBufBarrier(cmdbuf, DkBarrier_Full,
+                    DkInvalidateFlags_Image | DkInvalidateFlags_Descriptors |
+                        (textures_dirty ? DkInvalidateFlags_L2Cache : 0));
     textures_dirty = false;
     dkCmdBufBindRenderTarget(cmdbuf, &color_view, &depth_view);
     const DkScissor scissor = { 0, 0, width, height };
@@ -536,7 +551,8 @@ void siglus_gpu_draw(const SiglusGpuDraw* d) {
     if (textures_dirty) {
         /* A texture was created or uploaded inside this pass (copies run
          * on their own engine): finish them and drop stale cache lines. */
-        dkCmdBufBarrier(cmdbuf, DkBarrier_Full, DkInvalidateFlags_Image | DkInvalidateFlags_Descriptors);
+        dkCmdBufBarrier(cmdbuf, DkBarrier_Full,
+                        DkInvalidateFlags_Image | DkInvalidateFlags_Descriptors | DkInvalidateFlags_L2Cache);
         textures_dirty = false;
     }
     const DkShader* shaders[2] = { &programs[d->vertex_program - 1], &programs[d->fragment_program - 1] };

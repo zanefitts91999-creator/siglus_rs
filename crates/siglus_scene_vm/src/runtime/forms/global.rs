@@ -1809,7 +1809,7 @@ fn dispatch_capture_command(
             let end_layer = named_i64(args, 1).unwrap_or(1023);
             let width = named_i64(args, 3).unwrap_or(ctx.screen_w as i64).max(1) as u32;
             let height = named_i64(args, 4).unwrap_or(ctx.screen_h as i64).max(1) as u32;
-            let img = ctx.capture_frame_rgba_until(end_order, end_layer)?;
+            let img = ctx.capture_frame_rgba_until_sized(end_order, end_layer, width, height)?;
             let capture_time =
                 crate::runtime::forms::syscom::capture_for_local_save(ctx, &img, width, height);
             ctx.push(Value::Int(capture_time));

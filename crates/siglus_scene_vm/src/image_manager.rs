@@ -688,6 +688,7 @@ impl ImageManager {
             .get(&cache_key)
             .and_then(WeakImageHandle::upgrade)
         {
+            self.keep_recent_album(&id.album);
             return Ok(id);
         }
 
@@ -728,6 +729,7 @@ impl ImageManager {
         }
 
         let id = self.insert_image(composed);
+        self.keep_recent_album(&id.album);
         self.composite_to_id.insert(cache_key, id.downgrade());
         Ok(id)
     }
@@ -799,6 +801,7 @@ impl ImageManager {
         };
 
         if let Some(id) = self.key_to_id.get(&key).and_then(WeakImageHandle::upgrade) {
+            self.keep_recent_album(&id.album);
             return Ok(id);
         }
 
@@ -832,6 +835,7 @@ impl ImageManager {
         let img = load_image_any(&resolved, frame_index)
             .with_context(|| format!("load image {:?}", resolved))?;
         let id = self.insert_image(img);
+        self.keep_recent_album(&id.album);
         self.key_to_id.insert(key, id.downgrade());
         Ok(id)
     }
@@ -883,6 +887,24 @@ impl ImageManager {
     /// This allows the renderer to update the GPU texture without changing the ImageHandle.
     pub fn replace_image(&mut self, id: &ImageHandle, img: RgbaImage) -> Result<()> {
         self.replace_image_arc(id, Arc::new(img))
+    }
+
+    /// Update or insert an in-memory cached file image for `path` (frame 0) so
+    /// newly saved thumbnails are immediately available without re-reading and
+    /// decoding the PNG/BMP from the SD card.
+    pub fn cache_file_image(&mut self, path: &Path, img: RgbaImage) {
+        let key = ImageSourceKey {
+            path: path.to_path_buf(),
+            frame_index: 0,
+        };
+        if let Some(existing) = self.key_to_id.get(&key).and_then(WeakImageHandle::upgrade) {
+            let _ = self.replace_image(&existing, img);
+            self.keep_recent_album(&existing.album);
+            return;
+        }
+        let id = self.insert_image(img);
+        self.keep_recent_album(&id.album);
+        self.key_to_id.insert(key, id.downgrade());
     }
 
     pub fn replace_image_arc(&mut self, id: &ImageHandle, img: Arc<RgbaImage>) -> Result<()> {

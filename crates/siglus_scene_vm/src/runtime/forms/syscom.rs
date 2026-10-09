@@ -1000,8 +1000,7 @@ fn capture_slot_thumb(
         return Ok(resize_rgba(img.as_ref(), config.width, config.height));
     }
 
-    let img = ctx.capture_frame_rgba()?;
-    Ok(resize_rgba(&img, config.width, config.height))
+    ctx.capture_frame_rgba_sized(config.width, config.height)
 }
 
 pub(crate) const CAPTURE_PRIOR_NONE: i32 = 0;
@@ -1075,7 +1074,13 @@ pub(crate) fn capture_for_local_save(
             return 0;
         }
     };
-    let resized = resize_rgba(img, width.max(1), height.max(1));
+    let w = width.max(1);
+    let h = height.max(1);
+    let resized = if img.width == w && img.height == h {
+        img.clone()
+    } else {
+        resize_rgba(img, w, h)
+    };
     let path = original_save::save_dir(&ctx.project_dir).join(format!("{capture_time}.png"));
     if let Err(err) = write_rgba_png_opaque(&path, &resized) {
         log::error!(
@@ -1084,6 +1089,7 @@ pub(crate) fn capture_for_local_save(
         );
         return 0;
     }
+    ctx.images.cache_file_image(&path, resized);
     capture_time
 }
 
@@ -1108,7 +1114,6 @@ fn write_slot_thumb_for_save_no(ctx: &mut CommandContext, save_no: usize) {
             config.thumb_type
         );
     }
-    remove_game_file(&path);
     let result = match config.thumb_type {
         SaveThumbType::Bmp => write_rgba_bmp_top_down(&path, &img),
         SaveThumbType::Png => write_rgba_png_opaque(&path, &img),
@@ -1118,6 +1123,8 @@ fn write_slot_thumb_for_save_no(ctx: &mut CommandContext, save_no: usize) {
             "[SG_SAVE] failed to write save thumb {}: {err:#}",
             path.display()
         );
+    } else {
+        ctx.images.cache_file_image(&path, img);
     }
 }
 
@@ -4043,17 +4050,17 @@ fn remove_game_file(path: &Path) {
 
 fn copy_game_file(src: &Path, dst: &Path) {
     let _ = fs::copy(src, dst);
-    crate::resource::invalidate_game_path_cache(dst);
+    crate::resource::record_game_file_written(dst);
 }
 
 fn rename_game_file(src: &Path, dst: &Path) {
     let _ = fs::rename(src, dst);
     crate::resource::invalidate_game_path_cache(src);
-    crate::resource::invalidate_game_path_cache(dst);
+    crate::resource::record_game_file_written(dst);
 }
 
 fn mark_game_file_written(path: &Path) {
-    crate::resource::invalidate_game_path_cache(path);
+    crate::resource::record_game_file_written(path);
 }
 
 fn opaque_rgba(img: &RgbaImage) -> RgbaImage {
@@ -4071,18 +4078,40 @@ fn opaque_rgba(img: &RgbaImage) -> RgbaImage {
 }
 
 fn write_rgba_png(path: &Path, img: &RgbaImage) -> Result<()> {
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    use image::ImageEncoder;
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let Some(buf) = image::RgbaImage::from_raw(img.width, img.height, img.rgba.clone()) else {
+    let expected_len = (img.width as usize)
+        .checked_mul(img.height as usize)
+        .and_then(|px| px.checked_mul(4))
+        .ok_or_else(|| anyhow::anyhow!("invalid rgba dimensions {}x{}", img.width, img.height))?;
+    if img.rgba.len() != expected_len {
         anyhow::bail!("invalid rgba buffer for {}x{} image", img.width, img.height);
-    };
-    buf.save(path)?;
+    }
+    let mut png_bytes = Vec::with_capacity(expected_len / 2);
+    let encoder = PngEncoder::new_with_quality(
+        &mut png_bytes,
+        CompressionType::Fast,
+        FilterType::NoFilter,
+    );
+    encoder.write_image(
+        &img.rgba,
+        img.width,
+        img.height,
+        image::ExtendedColorType::Rgba8,
+    )?;
+    fs::write(path, png_bytes)?;
     mark_game_file_written(path);
     Ok(())
 }
 
 fn write_rgba_png_opaque(path: &Path, img: &RgbaImage) -> Result<()> {
+    if img.rgba.chunks_exact(4).all(|px| px[3] == 255) {
+        return write_rgba_png(path, img);
+    }
     let opaque = opaque_rgba(img);
     write_rgba_png(path, &opaque)
 }
@@ -6356,10 +6385,11 @@ pub fn dispatch(ctx: &mut CommandContext, form_id: u32, args: &[Value]) -> Resul
             ctx.globals.syscom.capture_size = None;
         }
         CAPTURE_TO_CAPTURE_BUFFER => {
-            let mut img = ctx.capture_frame_rgba()?;
-            if let Some((w, h)) = ctx.globals.syscom.capture_size {
-                img = resize_rgba(&img, w, h);
-            }
+            let img = if let Some((w, h)) = ctx.globals.syscom.capture_size {
+                ctx.capture_frame_rgba_sized(w, h)?
+            } else {
+                ctx.capture_frame_rgba()?
+            };
             ctx.globals.syscom.capture_buffer = Some(img);
         }
         SAVE_CAPTURE_BUFFER_TO_FILE => {
@@ -6376,14 +6406,16 @@ pub fn dispatch(ctx: &mut CommandContext, form_id: u32, args: &[Value]) -> Resul
             }
             let path = join_game_path(&ctx.project_dir, &name);
             if ctx.globals.syscom.capture_buffer.is_none() {
-                let mut img = ctx.capture_frame_rgba()?;
-                if let Some((w, h)) = ctx.globals.syscom.capture_size {
-                    img = resize_rgba(&img, w, h);
-                }
+                let img = if let Some((w, h)) = ctx.globals.syscom.capture_size {
+                    ctx.capture_frame_rgba_sized(w, h)?
+                } else {
+                    ctx.capture_frame_rgba()?
+                };
                 ctx.globals.syscom.capture_buffer = Some(img);
             }
-            if let Some(img) = ctx.globals.syscom.capture_buffer.as_ref() {
-                write_rgba_png(&path, img);
+            if let Some(img) = ctx.globals.syscom.capture_buffer.clone() {
+                let _ = write_rgba_png(&path, &img);
+                ctx.images.cache_file_image(&path, img);
                 save_capture_flags_sidecar(ctx, &path, params);
                 ctx.push(Value::Int(1));
             } else {
@@ -6411,11 +6443,13 @@ pub fn dispatch(ctx: &mut CommandContext, form_id: u32, args: &[Value]) -> Resul
         CAPTURE_AND_SAVE_BUFFER_TO_PNG => {
             let file_name = params.get(2).and_then(|v| v.as_str()).unwrap_or("");
             let path = join_game_path(&ctx.project_dir, file_name);
-            let mut img = ctx.capture_frame_rgba()?;
-            if let Some((w, h)) = ctx.globals.syscom.capture_size {
-                img = resize_rgba(&img, w, h);
-            }
-            write_rgba_png(&path, &img);
+            let img = if let Some((w, h)) = ctx.globals.syscom.capture_size {
+                ctx.capture_frame_rgba_sized(w, h)?
+            } else {
+                ctx.capture_frame_rgba()?
+            };
+            let _ = write_rgba_png(&path, &img);
+            ctx.images.cache_file_image(&path, img);
         }
         OPEN_TWEET_DIALOG => {
             open_tweet_dialog(ctx)?;

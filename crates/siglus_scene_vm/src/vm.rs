@@ -2070,6 +2070,13 @@ impl<'a> SceneVm<'a> {
     }
 
     fn find_scene_no_by_name(pck: &ScenePck, name: &str) -> Option<usize> {
+        if let Some(&scene_no) = pck.scn_name_map.get(name) {
+            return Some(scene_no);
+        }
+        let lower = name.to_lowercase();
+        if let Some(&scene_no) = pck.scn_name_map.get(&lower) {
+            return Some(scene_no);
+        }
         pck.scn_name_map.iter().find_map(|(scene_name, scene_no)| {
             if siglus_name_eq(scene_name, name) {
                 Some(*scene_no)
@@ -12827,12 +12834,14 @@ impl<'a> SceneVm<'a> {
             stream.get_prg_cntr(),
             stream.scn.len()
         );
-        self.call_cmd_names = self
-            .scene_pck_cache
-            .as_ref()
-            .expect("scene pck cache initialized")
-            .inc_cmd_name_map
-            .clone();
+        if self.call_cmd_names.is_empty() {
+            self.call_cmd_names = self
+                .scene_pck_cache
+                .as_ref()
+                .expect("scene pck cache initialized")
+                .inc_cmd_name_map
+                .clone();
+        }
         self.user_cmd_names = stream.scn_cmd_name_map.clone();
         match stream.jump_to_z_label(z_no.max(0) as usize) {
             Ok(()) => {

@@ -106,7 +106,7 @@ pub struct SwitchHost {
 /// How often the global save is checked for changes. Nothing else writes
 /// it before the game's own end/return-to-menu, and closing the app from
 /// HOME never gets there: the game would start as on its first boot again.
-const GLOBAL_SAVE_INTERVAL: u64 = 300;
+const GLOBAL_SAVE_INTERVAL: u64 = 3600;
 
 const DUMP_DIR: &str = "sdmc:/switch/siglus_rs/dump";
 
@@ -149,7 +149,7 @@ impl SwitchHost {
         }
         self.frame += 1;
         let running = self.host.step(dt_ms);
-        if self.frame % GLOBAL_SAVE_INTERVAL == 0 {
+        if self.frame % GLOBAL_SAVE_INTERVAL == 0 && !self.host.is_busy_transition_or_movie() {
             self.global_fingerprint = self.host.persist_global_if_changed(Some(self.global_fingerprint));
         }
         running

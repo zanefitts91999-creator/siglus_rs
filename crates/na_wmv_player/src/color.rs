@@ -116,32 +116,91 @@ pub fn yuv420p_to_rgba(frame: &YuvFrame) -> Vec<u8> {
 /// Convert to a bounded output size directly from YUV, without a full-size
 /// RGBA allocation. Sampling uses the nearest source pixel.
 pub fn yuv420p_to_rgba_scaled(frame: &YuvFrame, output_width: u32, output_height: u32) -> Vec<u8> {
-    let width = frame.width as usize;
-    let height = frame.height as usize;
+    let mut rgba = Vec::new();
+    yuv420p_to_rgba_scaled_into(
+        frame,
+        frame.width,
+        frame.height,
+        output_width,
+        output_height,
+        &mut rgba,
+    );
+    rgba
+}
+
+/// Convert a visible region (`visible_width` x `visible_height`) of a WMV YUV420p
+/// frame (whose stride is `frame.width`) into a reusable RGBA8 buffer of size
+/// `output_width` x `output_height`.
+pub fn yuv420p_to_rgba_scaled_into(
+    frame: &YuvFrame,
+    visible_width: u32,
+    visible_height: u32,
+    output_width: u32,
+    output_height: u32,
+    rgba: &mut Vec<u8>,
+) {
+    let stride = frame.width as usize;
+    let width = (visible_width as usize).min(stride);
+    let height = (visible_height as usize).min(frame.height as usize);
     let output_width = output_width as usize;
     let output_height = output_height as usize;
-    let chroma_width = width / 2;
-    let matrix = VideoTransferMatrix::for_unspecified_source(frame.height);
-    let mut rgba = vec![0u8; output_width.saturating_mul(output_height).saturating_mul(4)];
-
-    for out_y in 0..output_height {
-        let y = out_y * height / output_height;
-        for out_x in 0..output_width {
-            let x = out_x * width / output_width;
-            let luma = frame.y.get(y * width + x).copied().unwrap_or(16);
-            let chroma_index = (y / 2).saturating_mul(chroma_width).saturating_add(x / 2);
-            let cb = frame.cb.get(chroma_index).copied().unwrap_or(128);
-            let cr = frame.cr.get(chroma_index).copied().unwrap_or(128);
-            let [r, g, b] = yuv_limited_to_rgb(luma, cb, cr, matrix);
-            let out = (out_y * output_width + out_x) * 4;
-            rgba[out] = r;
-            rgba[out + 1] = g;
-            rgba[out + 2] = b;
-            rgba[out + 3] = 255;
-        }
+    let chroma_stride = stride / 2;
+    let matrix = VideoTransferMatrix::for_unspecified_source(visible_height.max(frame.height));
+    let total_bytes = output_width.saturating_mul(output_height).saturating_mul(4);
+    rgba.resize(total_bytes, 0);
+    if output_width == 0 || output_height == 0 || width == 0 || height == 0 {
+        return;
     }
 
-    rgba
+    let chroma_vis_width = (width / 2).max(1);
+    let mut x_map = Vec::with_capacity(output_width);
+    for out_x in 0..output_width {
+        let x = (out_x * width / output_width).min(width.saturating_sub(1));
+        let cx = (x / 2).min(chroma_vis_width.saturating_sub(1));
+        x_map.push((x, cx));
+    }
+
+    let y_plane = &frame.y;
+    let cb_plane = &frame.cb;
+    let cr_plane = &frame.cr;
+
+    for out_y in 0..output_height {
+        let y = (out_y * height / output_height).min(height.saturating_sub(1));
+        let y_row_start = y.saturating_mul(stride);
+        let c_row_start = (y / 2).saturating_mul(chroma_stride);
+        let out_row_start = out_y.saturating_mul(output_width).saturating_mul(4);
+        let out_row = &mut rgba[out_row_start..out_row_start + output_width * 4];
+
+        if y_row_start + width <= y_plane.len()
+            && c_row_start + chroma_vis_width <= cb_plane.len()
+            && c_row_start + chroma_vis_width <= cr_plane.len()
+        {
+            let y_row = &y_plane[y_row_start..y_row_start + width];
+            let cb_row = &cb_plane[c_row_start..c_row_start + chroma_vis_width];
+            let cr_row = &cr_plane[c_row_start..c_row_start + chroma_vis_width];
+            for (dst_px, &(x, cx)) in out_row.chunks_exact_mut(4).zip(x_map.iter()) {
+                let luma = y_row[x];
+                let cb = cb_row[cx];
+                let cr = cr_row[cx];
+                let [r, g, b] = yuv_limited_to_rgb(luma, cb, cr, matrix);
+                dst_px[0] = r;
+                dst_px[1] = g;
+                dst_px[2] = b;
+                dst_px[3] = 255;
+            }
+        } else {
+            for (dst_px, &(x, cx)) in out_row.chunks_exact_mut(4).zip(x_map.iter()) {
+                let luma = y_plane.get(y_row_start + x).copied().unwrap_or(16);
+                let cb = cb_plane.get(c_row_start + cx).copied().unwrap_or(128);
+                let cr = cr_plane.get(c_row_start + cx).copied().unwrap_or(128);
+                let [r, g, b] = yuv_limited_to_rgb(luma, cb, cr, matrix);
+                dst_px[0] = r;
+                dst_px[1] = g;
+                dst_px[2] = b;
+                dst_px[3] = 255;
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -730,7 +730,7 @@ impl Renderer {
         if matches!(wipe.wipe_type, 300 | 301) {
             gpu::begin_pass(Some(&self.targets[target as usize]), None, true);
             self.copy(self.targets[under as usize].id, geom);
-            for page in build_page_wipe_draws(wipe, geom.width as f32, geom.height as f32) {
+            for page in build_page_wipe_draws(wipe, self.logical_w as f32, self.logical_h as f32) {
                 let mut draw = GpuDraw::new(self.programs.page_v, self.programs.page_f);
                 draw.layout(size_of::<PageWipeVertex>() as u32, PAGE_ATTRIBUTES);
                 draw.vertices(&page.vertices);
@@ -752,7 +752,7 @@ impl Renderer {
             Some(id) => self.image_texture(images, id).unwrap_or(-1),
             None => self.generated_wipe_mask(wipe),
         };
-        let uniform: WipeUniform = wipe_uniform(wipe, geom.width as f32, geom.height as f32);
+        let uniform: WipeUniform = wipe_uniform(wipe, self.logical_w as f32, self.logical_h as f32);
         gpu::begin_pass(Some(&self.targets[target as usize]), Some([0.0, 0.0, 0.0, 1.0]), false);
         // `vs_main` builds its full-screen triangle from the vertex index.
         let dummy = [0u32; 3];
@@ -774,7 +774,7 @@ impl Renderer {
 
     /// `ensure_generated_wipe_mask`.
     fn generated_wipe_mask(&mut self, wipe: &WipeRenderPlan) -> i32 {
-        let (w, h) = self.target_size();
+        let (w, h) = (self.logical_w.max(1), self.logical_h.max(1));
         let key = WipeMaskCacheKey {
             wipe_type: wipe.wipe_type,
             option: wipe.option.clone(),
@@ -987,7 +987,7 @@ impl FrameCaptureBackend for Renderer {
         self.prepare_emotes(frame);
         let final_target = self.render_frame_to_targets(images, frame)?;
         let target = &self.targets[final_target as usize];
-        let rgba = target
+        let mut rgba = target
             .read()
             .ok_or_else(|| anyhow::anyhow!("capture read-back failed"))?;
         let (tw, th) = (target.width as usize, target.height as usize);
@@ -996,13 +996,30 @@ impl FrameCaptureBackend for Renderer {
         }
         let width = logical_width.max(1) as usize;
         let height = logical_height.max(1) as usize;
+        if width == tw && height == th {
+            for px in rgba.chunks_exact_mut(4) {
+                px[3] = 255;
+            }
+            return Ok(RgbaImage {
+                width: width as u32,
+                height: height as u32,
+                center_x: 0,
+                center_y: 0,
+                rgba,
+            });
+        }
+        let x_table: Vec<usize> = (0..width).map(|x| (x * tw / width).min(tw - 1) * 4).collect();
         let mut out = vec![0u8; width * height * 4];
         for y in 0..height {
             let sy = (y * th / height).min(th - 1);
-            for x in 0..width {
-                let sx = (x * tw / width).min(tw - 1);
-                out[(y * width + x) * 4..][..4].copy_from_slice(&rgba[(sy * tw + sx) * 4..][..4]);
-                out[(y * width + x) * 4 + 3] = 255;
+            let src_row = &rgba[sy * tw * 4..(sy + 1) * tw * 4];
+            let dst_row = &mut out[y * width * 4..(y + 1) * width * 4];
+            for (x, &sx_byte) in x_table.iter().enumerate() {
+                let dst = &mut dst_row[x * 4..x * 4 + 4];
+                dst[0] = src_row[sx_byte];
+                dst[1] = src_row[sx_byte + 1];
+                dst[2] = src_row[sx_byte + 2];
+                dst[3] = 255;
             }
         }
         Ok(RgbaImage {

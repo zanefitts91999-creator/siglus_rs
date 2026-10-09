@@ -239,12 +239,12 @@ impl Wmv3Decoder {
         out
     }
 
-    pub fn decode_frame_owned(
+    pub fn decode_frame_ref(
         &mut self,
         payload: &[u8],
         is_key_frame: bool,
         pts_ms: u32,
-    ) -> Result<Option<YuvFrame>> {
+    ) -> Result<Option<(&YuvFrame, u32, u32)>> {
         if payload.is_empty() {
             return Ok(None);
         }
@@ -264,6 +264,18 @@ impl Wmv3Decoder {
         }
         self.mb_dec
             .decode_frame(payload, &hdr, &self.seq, &mut self.cur)?;
+        Ok(Some((&self.cur, self.seq.width, self.seq.height)))
+    }
+
+    pub fn decode_frame_owned(
+        &mut self,
+        payload: &[u8],
+        is_key_frame: bool,
+        pts_ms: u32,
+    ) -> Result<Option<YuvFrame>> {
+        if self.decode_frame_ref(payload, is_key_frame, pts_ms)?.is_none() {
+            return Ok(None);
+        }
         // Keep the macroblock-aligned surface internally for future references;
         // only crop when handing a frame to callers/rendering.
         Ok(Some(self.visible_frame()))
@@ -459,12 +471,12 @@ impl Wvc1Decoder {
         })
     }
 
-    pub fn decode_frame_owned(
+    pub fn decode_frame_ref(
         &mut self,
         payload: &[u8],
         is_key_frame: bool,
         pts_ms: u32,
-    ) -> Result<Option<YuvFrame>> {
+    ) -> Result<Option<(&YuvFrame, u32, u32)>> {
         if payload.is_empty() {
             return Ok(None);
         }
@@ -488,6 +500,20 @@ impl Wvc1Decoder {
         }
         self.mb_dec
             .decode_frame(&frame_payload, &hdr, &self.seq, &mut self.cur)?;
+        let vis_w = self.width();
+        let vis_h = self.height();
+        Ok(Some((&self.cur, vis_w, vis_h)))
+    }
+
+    pub fn decode_frame_owned(
+        &mut self,
+        payload: &[u8],
+        is_key_frame: bool,
+        pts_ms: u32,
+    ) -> Result<Option<YuvFrame>> {
+        if self.decode_frame_ref(payload, is_key_frame, pts_ms)?.is_none() {
+            return Ok(None);
+        }
         Ok(Some(self.visible_frame()))
     }
 }
@@ -499,6 +525,23 @@ enum VideoCodecDecoder {
 }
 
 impl VideoCodecDecoder {
+    fn decode_frame_ref(
+        &mut self,
+        payload: &[u8],
+        is_key: bool,
+        pts_ms: u32,
+    ) -> Result<Option<(&YuvFrame, u32, u32)>> {
+        match self {
+            Self::Wmv12(d) => {
+                let w = d.width();
+                let h = d.height();
+                Ok(d.decode_frame(payload, is_key)?.map(|f| (f, w, h)))
+            }
+            Self::Wmv3(d) => d.decode_frame_ref(payload, is_key, pts_ms),
+            Self::Wvc1(d) => d.decode_frame_ref(payload, is_key, pts_ms),
+        }
+    }
+
     fn decode_frame_owned(
         &mut self,
         payload: &[u8],
@@ -941,6 +984,44 @@ impl<R: Read + Seek> AsfWmv2Decoder<R> {
                     is_key_frame: is_key,
                     frame,
                 }));
+            }
+        }
+    }
+
+    /// Decode the next video frame and invoke `f(pts_ms, is_key_frame, frame, visible_width, visible_height)`
+    /// directly on the internal decoder buffer without cloning `YuvFrame`.
+    pub fn next_frame_with<T, F>(&mut self, f: F) -> Result<Option<T>>
+    where
+        F: FnOnce(u32, bool, &YuvFrame, u32, u32) -> T,
+    {
+        loop {
+            let payload = if let Some(payload) = self.pending_payloads.pop_front() {
+                payload
+            } else {
+                let payloads = match self.asf.read_packet(&mut self.reader) {
+                    Ok(p) => p,
+                    Err(DecoderError::EndOfStream) => return Ok(None),
+                    Err(e) => return Err(e),
+                };
+                self.pending_payloads.extend(
+                    payloads
+                        .into_iter()
+                        .filter(|payload| payload.stream_number == self.video_info.stream_number),
+                );
+                let Some(payload) = self.pending_payloads.pop_front() else {
+                    continue;
+                };
+                payload
+            };
+
+            let Some((pts_ms, is_key, data)) = self.assembler.push(payload) else {
+                continue;
+            };
+
+            if let Some((frame, vis_w, vis_h)) =
+                self.decoder.decode_frame_ref(&data, is_key, pts_ms)?
+            {
+                return Ok(Some(f(pts_ms, is_key, frame, vis_w, vis_h)));
             }
         }
     }

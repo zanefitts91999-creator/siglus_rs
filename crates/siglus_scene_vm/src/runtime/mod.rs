@@ -8603,6 +8603,11 @@ impl CommandContext {
 
     /// Capture the current frame through the same wgpu render graph as presentation.
     pub fn capture_frame_rgba(&mut self) -> Result<RgbaImage> {
+        self.capture_frame_rgba_sized(self.screen_w, self.screen_h)
+    }
+
+    /// Capture the current frame scaled directly to the requested dimensions.
+    pub fn capture_frame_rgba_sized(&mut self, width: u32, height: u32) -> Result<RgbaImage> {
         let backend = self
             .frame_capture_backend
             .clone()
@@ -8611,7 +8616,7 @@ impl CommandContext {
 
         {
             let mut backend = backend.borrow_mut();
-            backend.capture_render_frame(&self.images, &frame, self.screen_w, self.screen_h)
+            backend.capture_render_frame(&self.images, &frame, width.max(1), height.max(1))
         }
     }
 
@@ -8620,6 +8625,17 @@ impl CommandContext {
         &mut self,
         end_order: i64,
         end_layer: i64,
+    ) -> Result<RgbaImage> {
+        self.capture_frame_rgba_until_sized(end_order, end_layer, self.screen_w, self.screen_h)
+    }
+
+    /// Capture only sprites up to the original engine order/layer cut line, scaled directly to `(width, height)`.
+    pub fn capture_frame_rgba_until_sized(
+        &mut self,
+        end_order: i64,
+        end_layer: i64,
+        width: u32,
+        height: u32,
     ) -> Result<RgbaImage> {
         let backend = self
             .frame_capture_backend
@@ -8641,7 +8657,7 @@ impl CommandContext {
 
         {
             let mut backend = backend.borrow_mut();
-            backend.capture_render_frame(&self.images, &frame, self.screen_w, self.screen_h)
+            backend.capture_render_frame(&self.images, &frame, width.max(1), height.max(1))
         }
     }
 }

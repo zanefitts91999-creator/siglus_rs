@@ -16,7 +16,7 @@ CFLAGS := -std=gnu17 -O3 -g -Wall -Wextra -ffunction-sections -fdata-sections \
 LDFLAGS := -specs=$(DEVKITPRO)/libnx/switch.specs -g \
 	-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE \
 	-Wl,--gc-sections -Wl,-Map,$(TARGET).map \
-	-Wl,--wrap=nvMapCreate -Wl,--wrap=nvAddressSpaceMap -L$(DEVKITPRO)/libnx/lib
+	-Wl,--wrap=nvMapCreate -Wl,--wrap=nvAddressSpaceMap -Wl,--wrap=pthread_create -L$(DEVKITPRO)/libnx/lib
 LDLIBS := -ldeko3d -lnx -lm
 RUST_LIB := ../../../target/aarch64-switch/release/libsiglus_scene_vm.a
 # Crates patched for the pinned nightly (see platform/switch/patches/README.md).

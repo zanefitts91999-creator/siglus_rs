@@ -28,7 +28,7 @@ pub use api::{AsfWmaDecoder, DecodedAudioFrame};
 pub use api::{AsfWmv2Decoder, DecodedFrame, Wmv2Decoder, Wmv3Decoder, Wvc1Decoder};
 pub use color::{
     VideoTransferMatrix, yuv_limited_to_rgb, yuv420p_to_rgb, yuv420p_to_rgba,
-    yuv420p_to_rgba_scaled,
+    yuv420p_to_rgba_scaled, yuv420p_to_rgba_scaled_into,
 };
 pub use decoder::YuvFrame;
 pub use error::{DecoderError, Result};

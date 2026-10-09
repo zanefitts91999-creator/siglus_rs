@@ -5,9 +5,11 @@
 use crate::ogg_xor::{BoundedFile, validate_subrange};
 use crate::vorbis;
 use anyhow::{Result, bail};
+use std::collections::HashMap;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy)]
 pub struct OvkEntry {
@@ -20,13 +22,28 @@ pub struct OvkEntry {
 #[derive(Debug, Clone)]
 pub struct OvkPack {
     path: PathBuf,
-    entries: Vec<OvkEntry>,
+    entries: Arc<Vec<OvkEntry>>,
     file_len: u64,
 }
+
+type OvkHeaderCache = HashMap<PathBuf, (Arc<Vec<OvkEntry>>, u64)>;
+
+static OVK_HEADER_CACHE: Mutex<Option<OvkHeaderCache>> = Mutex::new(None);
 
 impl OvkPack {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
+        if let Ok(mut guard) = OVK_HEADER_CACHE.lock() {
+            let cache = guard.get_or_insert_with(HashMap::new);
+            if let Some((entries, file_len)) = cache.get(&path) {
+                return Ok(Self {
+                    path,
+                    entries: Arc::clone(entries),
+                    file_len: *file_len,
+                });
+            }
+        }
+
         let mut f = File::open(&path)?;
         let file_len = f.metadata()?.len();
 
@@ -36,10 +53,10 @@ impl OvkPack {
         if count == 0 {
             bail!("OVK: zero entries");
         }
+        let mut table_bytes = vec![0u8; count * 16];
+        f.read_exact(&mut table_bytes)?;
         let mut entries = Vec::with_capacity(count);
-        for _ in 0..count {
-            let mut buf = [0u8; 16];
-            f.read_exact(&mut buf)?;
+        for buf in table_bytes.chunks_exact(16) {
             let size = u32::from_le_bytes(buf[0..4].try_into().unwrap());
             let offset = u32::from_le_bytes(buf[4..8].try_into().unwrap());
             let no = u32::from_le_bytes(buf[8..12].try_into().unwrap());
@@ -58,6 +75,12 @@ impl OvkPack {
             }
             validate_subrange(file_len, e.offset as u64, e.size as u64)
                 .map_err(|err| anyhow::anyhow!("OVK entry[{i}] out of range: {err}"))?;
+        }
+
+        let entries = Arc::new(entries);
+        if let Ok(mut guard) = OVK_HEADER_CACHE.lock() {
+            let cache = guard.get_or_insert_with(HashMap::new);
+            cache.insert(path.clone(), (Arc::clone(&entries), file_len));
         }
 
         Ok(Self {
@@ -95,14 +118,14 @@ impl OvkPack {
 
     /// Decode an entry (expected to be Ogg/Vorbis) into interleaved PCM16.
     pub fn decode_entry_vorbis_pcm16(&self, idx: usize) -> Result<vorbis::Pcm16> {
-        let s = self.open_entry_stream(idx)?;
-        vorbis::decode_ogg_vorbis_reader(s)
+        let bytes = self.extract_entry(idx)?;
+        vorbis::decode_ogg_vorbis_reader(Cursor::new(bytes))
     }
 
     /// Decode an entry (expected to be Ogg/Vorbis) and return a WAV (PCM16) buffer.
     pub fn decode_entry_vorbis_wav(&self, idx: usize) -> Result<Vec<u8>> {
-        let s = self.open_entry_stream(idx)?;
-        vorbis::decode_ogg_vorbis_reader_to_wav(s)
+        let bytes = self.extract_entry(idx)?;
+        vorbis::decode_ogg_vorbis_reader_to_wav(Cursor::new(bytes))
     }
 }
 
@@ -137,13 +160,13 @@ impl OwpFile {
 
     /// Decode the XORed Ogg/Vorbis file into interleaved PCM16.
     pub fn decode_vorbis_pcm16(&self) -> Result<vorbis::Pcm16> {
-        let s = self.open_stream()?;
-        vorbis::decode_ogg_vorbis_reader(s)
+        let bytes = self.decrypt_to_vec()?;
+        vorbis::decode_ogg_vorbis_reader(Cursor::new(bytes))
     }
 
     /// Decode the XORed Ogg/Vorbis file and return a WAV (PCM16) buffer.
     pub fn decode_vorbis_wav(&self) -> Result<Vec<u8>> {
-        let s = self.open_stream()?;
-        vorbis::decode_ogg_vorbis_reader_to_wav(s)
+        let bytes = self.decrypt_to_vec()?;
+        vorbis::decode_ogg_vorbis_reader_to_wav(Cursor::new(bytes))
     }
 }

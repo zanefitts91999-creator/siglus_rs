@@ -574,6 +574,12 @@ impl SiglusHost {
         self.renderer.borrow_mut()
     }
 
+    /// Returns true when a scene wipe transition or global movie is active,
+    /// so periodic background persistence does not stall the main thread mid-transition.
+    pub fn is_busy_transition_or_movie(&self) -> bool {
+        self.vm.ctx.globals.wipe.is_some() || self.vm.ctx.globals.mov.playing
+    }
+
     /// Writes the global save if what it keeps has changed since `last`
     /// (see `global_save_fingerprint`); returns the current fingerprint.
     pub fn persist_global_if_changed(&mut self, last: Option<u64>) -> u64 {
@@ -869,7 +875,6 @@ impl SiglusHost {
                         false,
                         proc.save_id.max(0) as usize,
                     );
-                    crate::runtime::forms::syscom::write_global_save(&self.vm.ctx);
                 }
                 Ok(true)
             }
@@ -894,7 +899,6 @@ impl SiglusHost {
                         true,
                         proc.save_id.max(0) as usize,
                     );
-                    crate::runtime::forms::syscom::write_global_save(&self.vm.ctx);
                 }
                 Ok(true)
             }
@@ -1467,7 +1471,6 @@ impl SiglusHost {
                                         false,
                                         proc.save_id.max(0) as usize,
                                     );
-                                    crate::runtime::forms::syscom::write_global_save(&self.vm.ctx);
                                 }
                                 SyscomPendingProcKind::Load => {
                                     crate::runtime::forms::syscom::menu_load_slot(
@@ -1482,7 +1485,6 @@ impl SiglusHost {
                                         true,
                                         proc.save_id.max(0) as usize,
                                     );
-                                    crate::runtime::forms::syscom::write_global_save(&self.vm.ctx);
                                 }
                                 SyscomPendingProcKind::QuickLoad => {
                                     crate::runtime::forms::syscom::menu_load_slot(
