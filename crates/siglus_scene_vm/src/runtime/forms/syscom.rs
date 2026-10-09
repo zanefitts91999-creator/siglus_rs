@@ -4101,7 +4101,7 @@ fn write_rgba_png(path: &Path, img: &RgbaImage) -> Result<()> {
         &img.rgba,
         img.width,
         img.height,
-        image::ExtendedColorType::Rgba8,
+        image::ColorType::Rgba8,
     )?;
     fs::write(path, png_bytes)?;
     mark_game_file_written(path);
