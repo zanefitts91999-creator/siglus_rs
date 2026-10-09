@@ -27,16 +27,52 @@ typedef struct Texture {
     bool used;
     bool render_target;
     uint32_t width, height, mip_levels;
+    uint32_t memory_size, memory_flags;
     DkMemBlock memory;
     DkImage image;
+    uint32_t depth_memory_size, depth_memory_flags;
     DkMemBlock depth_memory;
     DkImage depth;
 } Texture;
 
 typedef struct Deferred {
     DkMemBlock memory;
+    uint32_t memory_size;
+    uint32_t memory_flags;
     int32_t texture; /* descriptor slot to release, or -1 */
 } Deferred;
+
+#define MAX_MEMBLOCK_POOL 32
+
+typedef struct {
+    DkMemBlock block;
+    uint32_t size;
+    uint32_t flags;
+} MemBlockPoolEntry;
+
+static MemBlockPoolEntry memblock_pool[MAX_MEMBLOCK_POOL];
+static uint32_t memblock_pool_count = 0;
+
+typedef struct {
+    uint32_t vertex_program;
+    uint32_t fragment_program;
+    uint8_t cull_mode;
+    uint8_t front_face;
+    bool blend_enable;
+    uint8_t color_write_mask;
+    uint8_t color_op, color_src, color_dst;
+    uint8_t alpha_op, alpha_src, alpha_dst;
+    bool depth_test, depth_write;
+    uint8_t depth_compare;
+    bool stencil_enable;
+    uint8_t stencil_compare, stencil_fail, stencil_depth_fail, stencil_pass, stencil_ref;
+    uint32_t stride;
+    uint32_t attrib_count;
+    DkVtxAttribState attribs[SiglusGpuMaxVertexAttribs];
+    bool valid;
+} GpuDrawState;
+
+static GpuDrawState current_draw_state;
 
 typedef struct FrameSlot {
     DkCmdBuf cmdbuf;
@@ -121,8 +157,16 @@ static uint32_t align_up(uint32_t value, uint32_t alignment) {
 }
 
 static DkMemBlock make_memory(uint32_t size, uint32_t flags) {
+    const uint32_t aligned = align_up(size, DK_MEMBLOCK_ALIGNMENT);
+    for (uint32_t i = 0; i < memblock_pool_count; ++i) {
+        if (memblock_pool[i].flags == flags && memblock_pool[i].size == aligned) {
+            DkMemBlock found = memblock_pool[i].block;
+            memblock_pool[i] = memblock_pool[--memblock_pool_count];
+            return found;
+        }
+    }
     DkMemBlockMaker maker;
-    dkMemBlockMakerDefaults(&maker, device, align_up(size, DK_MEMBLOCK_ALIGNMENT));
+    dkMemBlockMakerDefaults(&maker, device, aligned);
     maker.flags = flags;
     return dkMemBlockCreate(&maker);
 }
@@ -155,28 +199,43 @@ static DkGpuAddr ring_alloc(uint32_t size, uint32_t alignment, void** cpu) {
 /* Frees after the GPU is done with every frame that could use it: during
  * a frame, with that frame's slot; between frames, with the slot of the
  * frame just finished (the other one). */
-static void defer(DkMemBlock memory, int32_t texture) {
+static void defer(DkMemBlock memory, uint32_t size, uint32_t flags, int32_t texture) {
     FrameSlot* slot = recording ? current : &slots[(frame_number + FrameSlots - 1) % FrameSlots];
     if (slot->deferred_count >= MaxDeferred) {
         /* Rare: wait for the GPU and free right away. */
         dkQueueWaitIdle(queue);
-        if (memory) dkMemBlockDestroy(memory);
+        if (memory) {
+            if (memblock_pool_count < MAX_MEMBLOCK_POOL && size > 0) {
+                memblock_pool[memblock_pool_count++] = (MemBlockPoolEntry) { memory, size, flags };
+            } else {
+                dkMemBlockDestroy(memory);
+            }
+        }
         if (texture >= 0) textures[texture].used = false;
         return;
     }
-    slot->deferred[slot->deferred_count++] = (Deferred) { memory, texture };
+    slot->deferred[slot->deferred_count++] = (Deferred) { memory, size, flags, texture };
 }
 
 static void release_deferred(FrameSlot* slot) {
     for (uint32_t i = 0; i < slot->deferred_count; ++i) {
-        if (slot->deferred[i].memory) dkMemBlockDestroy(slot->deferred[i].memory);
+        if (slot->deferred[i].memory) {
+            DkMemBlock mem = slot->deferred[i].memory;
+            uint32_t sz = slot->deferred[i].memory_size;
+            uint32_t fl = slot->deferred[i].memory_flags;
+            if (memblock_pool_count < MAX_MEMBLOCK_POOL && sz > 0) {
+                memblock_pool[memblock_pool_count++] = (MemBlockPoolEntry) { mem, sz, fl };
+            } else {
+                dkMemBlockDestroy(mem);
+            }
+        }
         if (slot->deferred[i].texture >= 0) textures[slot->deferred[i].texture].used = false;
     }
     slot->deferred_count = 0;
 }
 
-static void init_image(DkImage* image, DkMemBlock* memory, uint32_t width, uint32_t height,
-                       uint32_t mip_levels, DkImageFormat format, uint32_t flags) {
+static void init_image(DkImage* image, DkMemBlock* memory, uint32_t* out_size, uint32_t* out_flags,
+                       uint32_t width, uint32_t height, uint32_t mip_levels, DkImageFormat format, uint32_t flags) {
     DkImageLayoutMaker maker;
     dkImageLayoutMakerDefaults(&maker, device);
     maker.flags = flags;
@@ -189,7 +248,10 @@ static void init_image(DkImage* image, DkMemBlock* memory, uint32_t width, uint3
     const uint32_t alignment = dkImageLayoutGetAlignment(&layout);
     const uint32_t size = align_up((uint32_t) dkImageLayoutGetSize(&layout),
                                    alignment > DK_MEMBLOCK_ALIGNMENT ? alignment : DK_MEMBLOCK_ALIGNMENT);
-    *memory = make_memory(size, DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image);
+    const uint32_t mem_flags = DkMemBlockFlags_GpuCached | DkMemBlockFlags_Image;
+    *memory = make_memory(size, mem_flags);
+    if (out_size) *out_size = size;
+    if (out_flags) *out_flags = mem_flags;
     dkImageInitialize(image, &layout, *memory, 0);
 }
 
@@ -202,6 +264,7 @@ static void write_descriptor(int32_t id) {
 static void start_recording(void) {
     FrameSlot* slot = current;
     dkCmdBufClear(slot->cmdbuf);
+    memset(&current_draw_state, 0, sizeof(current_draw_state));
     /* The first chunk is kept; chunks added when a frame needed more go. */
     for (uint32_t i = 1; i < slot->chunk_count; ++i) dkMemBlockDestroy(slot->chunks[i]);
     if (slot->chunk_count == 0) {
@@ -258,7 +321,7 @@ void siglus_gpu_init(void) {
         dkImageInitialize(&framebuffers[i], &fb_layout, framebuffer_memory, i * fb_size);
         images[i] = &framebuffers[i];
     }
-    init_image(&display_depth, &display_depth_memory, DisplayWidth, DisplayHeight, 1,
+    init_image(&display_depth, &display_depth_memory, NULL, NULL, DisplayWidth, DisplayHeight, 1,
                DkImageFormat_Z24S8, DkImageFlags_UsageRender | DkImageFlags_HwCompression);
     DkSwapchainMaker swapchain_maker;
     window = nwindowGetDefault();
@@ -306,6 +369,10 @@ void siglus_gpu_exit(void) {
     for (unsigned i = 0; i < FrameSlots; ++i) {
         if (slots[i].fence_pending) dkFenceWait(&slots[i].fence, 250 * 1000 * 1000LL);
     }
+    for (uint32_t i = 0; i < memblock_pool_count; ++i) {
+        if (memblock_pool[i].block) dkMemBlockDestroy(memblock_pool[i].block);
+    }
+    memblock_pool_count = 0;
 }
 
 uint32_t siglus_gpu_display_width(void) { return DisplayWidth; }
@@ -366,10 +433,12 @@ int32_t siglus_gpu_texture_create(uint32_t width, uint32_t height, uint32_t mip_
     texture->height = height;
     texture->mip_levels = mip_levels;
     texture->render_target = (flags & SiglusGpuTexture_RenderTarget) != 0;
-    init_image(&texture->image, &texture->memory, width, height, mip_levels, DkImageFormat_RGBA8_Unorm,
+    init_image(&texture->image, &texture->memory, &texture->memory_size, &texture->memory_flags,
+               width, height, mip_levels, DkImageFormat_RGBA8_Unorm,
                texture->render_target ? DkImageFlags_UsageRender | DkImageFlags_HwCompression : 0);
     if (texture->render_target) {
-        init_image(&texture->depth, &texture->depth_memory, width, height, 1, DkImageFormat_Z24S8,
+        init_image(&texture->depth, &texture->depth_memory, &texture->depth_memory_size, &texture->depth_memory_flags,
+                   width, height, 1, DkImageFormat_Z24S8,
                    DkImageFlags_UsageRender | DkImageFlags_HwCompression);
     }
     write_descriptor(id);
@@ -391,8 +460,12 @@ void siglus_gpu_texture_upload(int32_t id, uint32_t level, const uint8_t* rgba, 
         addr = ring_alloc(size, 256, &cpu);
     }
     DkMemBlock temporary = NULL;
+    uint32_t temp_size = 0;
+    uint32_t temp_flags = 0;
     if (addr == 0) {
-        temporary = make_memory(size, DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached);
+        temp_flags = DkMemBlockFlags_CpuUncached | DkMemBlockFlags_GpuCached;
+        temp_size = align_up(size, DK_MEMBLOCK_ALIGNMENT);
+        temporary = make_memory(temp_size, temp_flags);
         cpu = dkMemBlockGetCpuAddr(temporary);
         addr = dkMemBlockGetGpuAddr(temporary);
     }
@@ -406,7 +479,7 @@ void siglus_gpu_texture_upload(int32_t id, uint32_t level, const uint8_t* rgba, 
     /* Wait for any earlier fragment reads of this texture before overwriting it in-place. */
     dkCmdBufBarrier(current->cmdbuf, DkBarrier_Fragments, 0);
     dkCmdBufCopyBufferToImage(current->cmdbuf, &src, &view, &rect, 0);
-    if (temporary) defer(temporary, -1);
+    if (temporary) defer(temporary, temp_size, temp_flags, -1);
     textures_dirty = true;
     total_uploads++;
     total_upload_bytes += size;
@@ -416,10 +489,12 @@ void siglus_gpu_texture_upload(int32_t id, uint32_t level, const uint8_t* rgba, 
 void siglus_gpu_texture_destroy(int32_t id) {
     if (id < 0 || id >= MaxTextures || !textures[id].used) return;
     Texture* texture = &textures[id];
-    defer(texture->memory, -1);
-    if (texture->render_target) defer(texture->depth_memory, -1);
+    defer(texture->memory, texture->memory_size, texture->memory_flags, -1);
+    if (texture->render_target) {
+        defer(texture->depth_memory, texture->depth_memory_size, texture->depth_memory_flags, -1);
+    }
     /* The slot is reused only after the frames that may read it are done. */
-    defer(NULL, id);
+    defer(NULL, 0, 0, id);
     texture->memory = NULL;
     texture->depth_memory = NULL;
 }
@@ -428,7 +503,9 @@ bool siglus_gpu_texture_read(int32_t id, uint8_t* rgba) {
     if (!recording || id < 0 || id >= MaxTextures || !textures[id].used) return false;
     Texture* texture = &textures[id];
     const uint32_t size = texture->width * texture->height * 4;
-    DkMemBlock staging = make_memory(size, DkMemBlockFlags_CpuCached | DkMemBlockFlags_GpuCached);
+    const uint32_t staging_flags = DkMemBlockFlags_CpuCached | DkMemBlockFlags_GpuCached;
+    const uint32_t staging_size = align_up(size, DK_MEMBLOCK_ALIGNMENT);
+    DkMemBlock staging = make_memory(staging_size, staging_flags);
     dkCmdBufBarrier(current->cmdbuf, DkBarrier_Fragments, DkInvalidateFlags_Image | DkInvalidateFlags_L2Cache);
     DkImageView view;
     dkImageViewDefaults(&view, &texture->image);
@@ -439,7 +516,11 @@ bool siglus_gpu_texture_read(int32_t id, uint8_t* rgba) {
     dkQueueWaitIdle(queue);
     dkMemBlockFlushCpuCache(staging, 0, size);
     memcpy(rgba, dkMemBlockGetCpuAddr(staging), size);
-    dkMemBlockDestroy(staging);
+    if (memblock_pool_count < MAX_MEMBLOCK_POOL) {
+        memblock_pool[memblock_pool_count++] = (MemBlockPoolEntry) { staging, staging_size, staging_flags };
+    } else {
+        dkMemBlockDestroy(staging);
+    }
     return true;
 }
 
@@ -555,47 +636,106 @@ void siglus_gpu_draw(const SiglusGpuDraw* d) {
                         DkInvalidateFlags_Image | DkInvalidateFlags_Descriptors | DkInvalidateFlags_L2Cache);
         textures_dirty = false;
     }
-    const DkShader* shaders[2] = { &programs[d->vertex_program - 1], &programs[d->fragment_program - 1] };
-    dkCmdBufBindShaders(cmdbuf, DkStageFlag_GraphicsMask, shaders, 2);
-
-    DkRasterizerState rasterizer;
-    dkRasterizerStateDefaults(&rasterizer);
-    rasterizer.cullMode = (DkFace) d->cull_mode;
-    rasterizer.frontFace = (DkFrontFace) d->front_face;
-    dkCmdBufBindRasterizerState(cmdbuf, &rasterizer);
-
-    DkColorState color_state;
-    dkColorStateDefaults(&color_state);
-    color_state.blendEnableMask = d->blend_enable ? 1 : 0;
-    dkCmdBufBindColorState(cmdbuf, &color_state);
-    DkColorWriteState color_write;
-    dkColorWriteStateDefaults(&color_write);
-    dkColorWriteStateSetMask(&color_write, 0, d->color_write_mask);
-    dkCmdBufBindColorWriteState(cmdbuf, &color_write);
-    if (d->blend_enable) {
-        DkBlendState blend;
-        dkBlendStateDefaults(&blend);
-        blend.colorBlendOp = (DkBlendOp) d->color_op;
-        blend.srcColorBlendFactor = (DkBlendFactor) d->color_src;
-        blend.dstColorBlendFactor = (DkBlendFactor) d->color_dst;
-        blend.alphaBlendOp = (DkBlendOp) d->alpha_op;
-        blend.srcAlphaBlendFactor = (DkBlendFactor) d->alpha_src;
-        blend.dstAlphaBlendFactor = (DkBlendFactor) d->alpha_dst;
-        dkCmdBufBindBlendState(cmdbuf, 0, &blend);
+    if (!current_draw_state.valid ||
+        current_draw_state.vertex_program != d->vertex_program ||
+        current_draw_state.fragment_program != d->fragment_program) {
+        const DkShader* shaders[2] = { &programs[d->vertex_program - 1], &programs[d->fragment_program - 1] };
+        dkCmdBufBindShaders(cmdbuf, DkStageFlag_GraphicsMask, shaders, 2);
+        current_draw_state.vertex_program = d->vertex_program;
+        current_draw_state.fragment_program = d->fragment_program;
     }
 
-    DkDepthStencilState depth;
-    dkDepthStencilStateDefaults(&depth);
-    depth.depthTestEnable = d->depth_test;
-    depth.depthWriteEnable = d->depth_write;
-    depth.depthCompareOp = (DkCompareOp) d->depth_compare;
-    depth.stencilTestEnable = d->stencil_enable;
-    depth.stencilFrontCompareOp = depth.stencilBackCompareOp = (DkCompareOp) d->stencil_compare;
-    depth.stencilFrontFailOp = depth.stencilBackFailOp = (DkStencilOp) d->stencil_fail;
-    depth.stencilFrontDepthFailOp = depth.stencilBackDepthFailOp = (DkStencilOp) d->stencil_depth_fail;
-    depth.stencilFrontPassOp = depth.stencilBackPassOp = (DkStencilOp) d->stencil_pass;
-    dkCmdBufBindDepthStencilState(cmdbuf, &depth);
-    if (d->stencil_enable) dkCmdBufSetStencil(cmdbuf, DkFace_FrontAndBack, 0xff, d->stencil_ref, 0xff);
+    if (!current_draw_state.valid ||
+        current_draw_state.cull_mode != d->cull_mode ||
+        current_draw_state.front_face != d->front_face) {
+        DkRasterizerState rasterizer;
+        dkRasterizerStateDefaults(&rasterizer);
+        rasterizer.cullMode = (DkFace) d->cull_mode;
+        rasterizer.frontFace = (DkFrontFace) d->front_face;
+        dkCmdBufBindRasterizerState(cmdbuf, &rasterizer);
+        current_draw_state.cull_mode = d->cull_mode;
+        current_draw_state.front_face = d->front_face;
+    }
+
+    if (!current_draw_state.valid ||
+        current_draw_state.blend_enable != d->blend_enable) {
+        DkColorState color_state;
+        dkColorStateDefaults(&color_state);
+        color_state.blendEnableMask = d->blend_enable ? 1 : 0;
+        dkCmdBufBindColorState(cmdbuf, &color_state);
+        current_draw_state.blend_enable = d->blend_enable;
+    }
+
+    if (!current_draw_state.valid ||
+        current_draw_state.color_write_mask != d->color_write_mask) {
+        DkColorWriteState color_write;
+        dkColorWriteStateDefaults(&color_write);
+        dkColorWriteStateSetMask(&color_write, 0, d->color_write_mask);
+        dkCmdBufBindColorWriteState(cmdbuf, &color_write);
+        current_draw_state.color_write_mask = d->color_write_mask;
+    }
+
+    if (d->blend_enable) {
+        if (!current_draw_state.valid ||
+            current_draw_state.color_op != d->color_op ||
+            current_draw_state.color_src != d->color_src ||
+            current_draw_state.color_dst != d->color_dst ||
+            current_draw_state.alpha_op != d->alpha_op ||
+            current_draw_state.alpha_src != d->alpha_src ||
+            current_draw_state.alpha_dst != d->alpha_dst) {
+            DkBlendState blend;
+            dkBlendStateDefaults(&blend);
+            blend.colorBlendOp = (DkBlendOp) d->color_op;
+            blend.srcColorBlendFactor = (DkBlendFactor) d->color_src;
+            blend.dstColorBlendFactor = (DkBlendFactor) d->color_dst;
+            blend.alphaBlendOp = (DkBlendOp) d->alpha_op;
+            blend.srcAlphaBlendFactor = (DkBlendFactor) d->alpha_src;
+            blend.dstAlphaBlendFactor = (DkBlendFactor) d->alpha_dst;
+            dkCmdBufBindBlendState(cmdbuf, 0, &blend);
+            current_draw_state.color_op = d->color_op;
+            current_draw_state.color_src = d->color_src;
+            current_draw_state.color_dst = d->color_dst;
+            current_draw_state.alpha_op = d->alpha_op;
+            current_draw_state.alpha_src = d->alpha_src;
+            current_draw_state.alpha_dst = d->alpha_dst;
+        }
+    }
+
+    if (!current_draw_state.valid ||
+        current_draw_state.depth_test != d->depth_test ||
+        current_draw_state.depth_write != d->depth_write ||
+        current_draw_state.depth_compare != d->depth_compare ||
+        current_draw_state.stencil_enable != d->stencil_enable ||
+        current_draw_state.stencil_compare != d->stencil_compare ||
+        current_draw_state.stencil_fail != d->stencil_fail ||
+        current_draw_state.stencil_depth_fail != d->stencil_depth_fail ||
+        current_draw_state.stencil_pass != d->stencil_pass) {
+        DkDepthStencilState depth;
+        dkDepthStencilStateDefaults(&depth);
+        depth.depthTestEnable = d->depth_test;
+        depth.depthWriteEnable = d->depth_write;
+        depth.depthCompareOp = (DkCompareOp) d->depth_compare;
+        depth.stencilTestEnable = d->stencil_enable;
+        depth.stencilFrontCompareOp = depth.stencilBackCompareOp = (DkCompareOp) d->stencil_compare;
+        depth.stencilFrontFailOp = depth.stencilBackFailOp = (DkStencilOp) d->stencil_fail;
+        depth.stencilFrontDepthFailOp = depth.stencilBackDepthFailOp = (DkStencilOp) d->stencil_depth_fail;
+        depth.stencilFrontPassOp = depth.stencilBackPassOp = (DkStencilOp) d->stencil_pass;
+        dkCmdBufBindDepthStencilState(cmdbuf, &depth);
+        current_draw_state.depth_test = d->depth_test;
+        current_draw_state.depth_write = d->depth_write;
+        current_draw_state.depth_compare = d->depth_compare;
+        current_draw_state.stencil_enable = d->stencil_enable;
+        current_draw_state.stencil_compare = d->stencil_compare;
+        current_draw_state.stencil_fail = d->stencil_fail;
+        current_draw_state.stencil_depth_fail = d->stencil_depth_fail;
+        current_draw_state.stencil_pass = d->stencil_pass;
+    }
+    if (d->stencil_enable) {
+        if (!current_draw_state.valid || current_draw_state.stencil_ref != d->stencil_ref) {
+            dkCmdBufSetStencil(cmdbuf, DkFace_FrontAndBack, 0xff, d->stencil_ref, 0xff);
+            current_draw_state.stencil_ref = d->stencil_ref;
+        }
+    }
 
     /* Attributes by location; unused locations in between read zero. */
     DkVtxAttribState attribs[SiglusGpuMaxVertexAttribs];
@@ -614,9 +754,19 @@ void siglus_gpu_draw(const SiglusGpuDraw* d) {
         attribs[i].size = sizes[components > 4 ? 4 : components];
         attribs[i].type = DkVtxAttribType_Float;
     }
-    dkCmdBufBindVtxAttribState(cmdbuf, attribs, attrib_count);
-    const DkVtxBufferState buffer_state = { d->stride, 0 };
-    dkCmdBufBindVtxBufferState(cmdbuf, &buffer_state, 1);
+    if (!current_draw_state.valid ||
+        current_draw_state.attrib_count != attrib_count ||
+        memcmp(current_draw_state.attribs, attribs, attrib_count * sizeof(DkVtxAttribState)) != 0) {
+        dkCmdBufBindVtxAttribState(cmdbuf, attribs, attrib_count);
+        current_draw_state.attrib_count = attrib_count;
+        memcpy(current_draw_state.attribs, attribs, attrib_count * sizeof(DkVtxAttribState));
+    }
+    if (!current_draw_state.valid || current_draw_state.stride != d->stride) {
+        const DkVtxBufferState buffer_state = { d->stride, 0 };
+        dkCmdBufBindVtxBufferState(cmdbuf, &buffer_state, 1);
+        current_draw_state.stride = d->stride;
+    }
+    current_draw_state.valid = true;
     const uint32_t vertex_bytes = d->vertex_count * d->stride;
     void* cpu = NULL;
     const DkGpuAddr vertices = ring_alloc(vertex_bytes, 16, &cpu);

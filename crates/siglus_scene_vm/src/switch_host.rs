@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use crate::host::{SiglusHost, SiglusHostConfig};
 use crate::render::Renderer;
-use crate::runtime::input::VmKey;
+use crate::runtime::input::{VmKey, VmMouseButton};
 
 unsafe extern "C" {
     fn siglus_switch_random_fill(buffer: *mut u8, length: usize);
@@ -101,6 +101,12 @@ pub struct SwitchHost {
     dump_frames: Vec<u64>,
     /// The global save as last written (`global_save_fingerprint`).
     global_fingerprint: u64,
+    virtual_mouse_x: f64,
+    virtual_mouse_y: f64,
+    virtual_mouse_initialized: bool,
+    cursor_active: bool,
+    cursor_last_active_tick: u64,
+    wheel_accum: f32,
 }
 
 /// How often the global save is checked for changes. Nothing else writes
@@ -132,11 +138,19 @@ impl SwitchHost {
         if !dump_frames.is_empty() {
             let _ = std::fs::create_dir_all(DUMP_DIR);
         }
+        // Mouse cursor starts hidden on Switch until the analog stick moves it.
+        host.vm_mut().ctx.globals.script.cursor_runtime_visible = false;
         Ok(Self {
             host,
             frame: 0,
             dump_frames,
             global_fingerprint,
+            virtual_mouse_x: 0.0,
+            virtual_mouse_y: 0.0,
+            virtual_mouse_initialized: false,
+            cursor_active: false,
+            cursor_last_active_tick: 0,
+            wheel_accum: 0.0,
         })
     }
 
@@ -148,11 +162,64 @@ impl SwitchHost {
             self.host.renderer_mut().dump_next_frame(PathBuf::from(path));
         }
         self.frame += 1;
+        // Auto-hide the mouse cursor after 2.5 seconds (150 frames @ 60fps) of no stick movement.
+        if self.cursor_active && self.frame.saturating_sub(self.cursor_last_active_tick) > 150 {
+            self.cursor_active = false;
+            self.host.vm_mut().ctx.globals.script.cursor_runtime_visible = false;
+        }
         let running = self.host.step(dt_ms);
         if self.frame % GLOBAL_SAVE_INTERVAL == 0 && !self.host.is_busy_transition_or_movie() {
             self.global_fingerprint = self.host.persist_global_if_changed(Some(self.global_fingerprint));
         }
         running
+    }
+
+    /// Analog stick input from libnx pad.
+    /// stick 0: Left Stick (virtual mouse pointer movement)
+    /// stick 1: Right Stick (vertical mouse wheel for backlog)
+    pub fn stick(&mut self, stick: i32, dx: f32, dy: f32) {
+        if stick == 0 {
+            let mag_sq = dx * dx + dy * dy;
+            const DEADZONE: f32 = 0.15;
+            if mag_sq > DEADZONE * DEADZONE {
+                let (logical_w, logical_h) = self.host.logical_size();
+                if !self.virtual_mouse_initialized {
+                    self.virtual_mouse_x = f64::from(logical_w) / 2.0;
+                    self.virtual_mouse_y = f64::from(logical_h) / 2.0;
+                    self.virtual_mouse_initialized = true;
+                }
+                let mag = mag_sq.sqrt();
+                let norm = ((mag - DEADZONE) / (1.0 - DEADZONE)).clamp(0.0, 1.0);
+                // Quadratic curve for fine precision at small tilt and high speed at full tilt
+                let speed_scale = norm * norm.max(0.4);
+                let step_px = speed_scale as f64 * (f64::from(logical_w) * 0.022);
+                let norm_dx = (dx / mag) as f64;
+                let norm_dy = (dy / mag) as f64;
+                // Switch HID stick Y is positive UP, so screen Y is inverted (-norm_dy)
+                self.virtual_mouse_x = (self.virtual_mouse_x + norm_dx * step_px)
+                    .clamp(0.0, f64::from(logical_w) - 1.0);
+                self.virtual_mouse_y = (self.virtual_mouse_y - norm_dy * step_px)
+                    .clamp(0.0, f64::from(logical_h) - 1.0);
+                self.host.mouse_move(self.virtual_mouse_x, self.virtual_mouse_y);
+                self.cursor_active = true;
+                self.cursor_last_active_tick = self.frame;
+                self.host.vm_mut().ctx.globals.script.cursor_runtime_visible = true;
+            }
+        } else if stick == 1 {
+            // Right Stick: Vertical wheel (Backlog scrolling)
+            if dy.abs() > 0.25 {
+                self.wheel_accum += dy;
+                if self.wheel_accum > 1.2 {
+                    self.host.mouse_wheel(120);
+                    self.wheel_accum = 0.0;
+                } else if self.wheel_accum < -1.2 {
+                    self.host.mouse_wheel(-120);
+                    self.wheel_accum = 0.0;
+                }
+            } else {
+                self.wheel_accum = 0.0;
+            }
+        }
     }
 
     /// The display size changed; the game keeps its own screen size.
@@ -173,22 +240,59 @@ impl SwitchHost {
         self.host.key_up(key);
     }
 
-    /// A touch at display pixel (x, y), mapped into the letterboxed game
-    /// screen.
+    /// A touch at display pixel (x, y), mapped into the letterboxed game screen.
+    /// Direct touch does NOT leave a mouse arrow on screen.
     pub fn touch(&mut self, phase: i32, x: f64, y: f64) {
+        self.cursor_active = false;
+        self.host.vm_mut().ctx.globals.script.cursor_runtime_visible = false;
         let [sx, sy, sw, sh] = self.host.renderer_mut().screen_viewport();
         let (logical_w, logical_h) = self.host.renderer_mut().logical_size();
         let lx = ((x - f64::from(sx)) * f64::from(logical_w) / f64::from(sw.max(1.0)))
             .clamp(0.0, f64::from(logical_w) - 1.0);
         let ly = ((y - f64::from(sy)) * f64::from(logical_h) / f64::from(sh.max(1.0)))
             .clamp(0.0, f64::from(logical_h) - 1.0);
+        self.virtual_mouse_x = lx;
+        self.virtual_mouse_y = ly;
+        self.virtual_mouse_initialized = true;
         self.host.touch(phase, lx, ly);
     }
 
     pub fn gamepad_button(&mut self, button: u8, down: bool) {
+        // D-pad navigation hides the virtual mouse cursor so arrows don't collide with cursor
+        if (12..=15).contains(&button) && down {
+            self.cursor_active = false;
+            self.host.vm_mut().ctx.globals.script.cursor_runtime_visible = false;
+        }
+
         let key = match button {
-            0 => Some(VmKey::Enter),   // A
-            1 => Some(VmKey::Escape),  // B
+            0 => {
+                if self.cursor_active {
+                    // Virtual mouse is active: A acts as Left Mouse Click at the cursor position
+                    if down {
+                        self.host.mouse_down(VmMouseButton::Left);
+                    } else {
+                        self.host.mouse_up(VmMouseButton::Left);
+                    }
+                    self.cursor_last_active_tick = self.frame;
+                    None
+                } else {
+                    Some(VmKey::Enter)   // A
+                }
+            }
+            1 => {
+                if self.cursor_active {
+                    // Virtual mouse is active: B acts as Right Mouse Click (cancel/back)
+                    if down {
+                        self.host.mouse_down(VmMouseButton::Right);
+                    } else {
+                        self.host.mouse_up(VmMouseButton::Right);
+                    }
+                    self.cursor_last_active_tick = self.frame;
+                    None
+                } else {
+                    Some(VmKey::Escape)  // B
+                }
+            }
             2 => Some(VmKey::Space),   // X
             3 => Some(VmKey::Tab),     // Y
             6 => Some(VmKey::Shift),   // L
@@ -201,16 +305,10 @@ impl SwitchHost {
             13 => Some(VmKey::ArrowUp),
             14 => Some(VmKey::ArrowRight),
             15 => Some(VmKey::ArrowDown),
-            16 | 20 => Some(VmKey::ArrowLeft),
-            17 | 21 => Some(VmKey::ArrowUp),
-            18 | 22 => Some(VmKey::ArrowRight),
-            19 | 23 => Some(VmKey::ArrowDown),
+            // Removed 16..=23 stick direction mapping to prevent fighting virtual mouse
             _ => None,
         };
-        // Feed the keyboard compatibility path first. `InputState::on_key_down`
-        // deliberately switches the active input family to keyboard/mouse, so
-        // recording the raw joypad edge before this call made every mapped
-        // controller press immediately cancel JOYPAD mode again.
+        // Feed the keyboard compatibility path first.
         if let Some(key) = key {
             if down {
                 self.host.key_down(key);
@@ -290,6 +388,18 @@ pub unsafe extern "C" fn siglus_switch_engine_touch(
 ) {
     if let Some(host) = unsafe { host.as_mut() } {
         host.touch(phase, x, y);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn siglus_switch_engine_stick(
+    host: *mut SwitchHost,
+    stick: i32,
+    dx: f32,
+    dy: f32,
+) {
+    if let Some(host) = unsafe { host.as_mut() } {
+        host.stick(stick, dx, dy);
     }
 }
 

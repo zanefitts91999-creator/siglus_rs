@@ -1,8 +1,10 @@
 use anyhow::{Context, Result, anyhow, bail};
+use std::collections::HashMap;
 use std::fs;
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::runtime::globals::SaveSlotState;
 
@@ -1052,27 +1054,55 @@ pub fn thumb_candidate_paths_with_counts(
 }
 
 pub fn read_header_from_path(path: &Path) -> Result<OriginalSaveHeader> {
-    // Native C_tnm_save_cache::load_cache() reads only
-    // sizeof(S_tnm_save_header). Do not pull the packed local-save payload
-    // into memory just to answer LOAD_SCENE metadata queries.
+    if let Some(data) = get_pending_bytes(path) {
+        if data.len() >= LEGACY_SAVE_HEADER_SIZE {
+            return OriginalSaveHeader::from_file_prefix(
+                &data[..data.len().min(SAVE_HEADER_SIZE)],
+                data.len(),
+            );
+        }
+    }
+    if let Some(header) = get_cached_save_header(path) {
+        return Ok(header);
+    }
+
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     {
         let mut file = crate::resource::open_game_file(path)
             .with_context(|| format!("open save header {}", path.display()))?;
-        let file_len = file.metadata()?.len() as usize;
-        let mut data = vec![0u8; file_len.min(SAVE_HEADER_SIZE)];
-        file.read_exact(&mut data)
-            .with_context(|| format!("read save header {}", path.display()))?;
-        OriginalSaveHeader::from_file_prefix(&data, file_len)
+        let mut data = vec![0u8; SAVE_HEADER_SIZE];
+        let mut bytes_read = 0;
+        while bytes_read < data.len() {
+            match file.read(&mut data[bytes_read..]) {
+                Ok(0) => break,
+                Ok(n) => bytes_read += n,
+                Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e.into()),
+            }
+        }
+        data.truncate(bytes_read);
+        if data.len() < LEGACY_SAVE_HEADER_SIZE {
+            bail!("save file too short: {}", path.display());
+        }
+        let file_len = file
+            .seek(SeekFrom::End(0))
+            .map(|l| l as usize)
+            .unwrap_or(bytes_read);
+        let header = OriginalSaveHeader::from_file_prefix(&data, file_len)?;
+        set_cached_save_header(path.to_path_buf(), header.clone());
+        Ok(header)
     }
 
-    // The browser VFS currently exposes whole-file reads only. Preserve that
-    // backend while keeping the native path faithful to C_file::read(header).
     #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     {
         let data = crate::resource::read_file_bytes(path)
             .with_context(|| format!("read save header {}", path.display()))?;
-        OriginalSaveHeader::from_file_prefix(&data[..data.len().min(SAVE_HEADER_SIZE)], data.len())
+        let header = OriginalSaveHeader::from_file_prefix(
+            &data[..data.len().min(SAVE_HEADER_SIZE)],
+            data.len(),
+        )?;
+        set_cached_save_header(path.to_path_buf(), header.clone());
+        Ok(header)
     }
 }
 
@@ -1096,6 +1126,16 @@ pub fn write_header_in_place(path: &Path, header: &OriginalSaveHeader) -> Result
     let mut header = header.clone();
     header.layout = existing.layout;
     header.data_size = existing.data_size;
+    set_cached_save_header(path.to_path_buf(), header.clone());
+    if let Ok(mut guard) = PENDING_SAVE_BYTES.lock() {
+        if let Some(map) = guard.as_mut() {
+            if let Some(pending) = map.get_mut(path) {
+                if pending.len() >= header.header_size() {
+                    pending[..header.header_size()].copy_from_slice(&header.to_bytes());
+                }
+            }
+        }
+    }
     // C_tnm_save_cache::save_cache() opens the existing file as rb+ and
     // overwrites only S_tnm_save_header. Keep the packed payload untouched.
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -1123,6 +1163,211 @@ pub fn write_header_in_place(path: &Path, header: &OriginalSaveHeader) -> Result
     }
 }
 
+pub enum SaveWriterTask {
+    FileBytes {
+        path: PathBuf,
+        bytes: Vec<u8>,
+    },
+    PngImage {
+        path: PathBuf,
+        image: crate::assets::RgbaImage,
+        opaque: bool,
+    },
+    BmpImage {
+        path: PathBuf,
+        image: crate::assets::RgbaImage,
+    },
+}
+
+static PENDING_SAVE_BYTES: Mutex<Option<HashMap<PathBuf, Vec<u8>>>> = Mutex::new(None);
+static SAVE_HEADER_CACHE: Mutex<Option<HashMap<PathBuf, OriginalSaveHeader>>> = Mutex::new(None);
+static SAVE_WRITER_SENDER: Mutex<Option<std::sync::mpsc::Sender<SaveWriterTask>>> =
+    Mutex::new(None);
+
+fn get_pending_bytes(path: &Path) -> Option<Vec<u8>> {
+    let guard = PENDING_SAVE_BYTES.lock().ok()?;
+    guard.as_ref()?.get(path).cloned()
+}
+
+fn set_pending_bytes(path: PathBuf, bytes: Vec<u8>) {
+    if let Ok(mut guard) = PENDING_SAVE_BYTES.lock() {
+        let map = guard.get_or_insert_with(HashMap::new);
+        map.insert(path, bytes);
+    }
+}
+
+fn remove_pending_bytes(path: &Path) {
+    if let Ok(mut guard) = PENDING_SAVE_BYTES.lock() {
+        if let Some(map) = guard.as_mut() {
+            map.remove(path);
+        }
+    }
+}
+
+pub fn get_cached_save_header(path: &Path) -> Option<OriginalSaveHeader> {
+    let guard = SAVE_HEADER_CACHE.lock().ok()?;
+    guard.as_ref()?.get(path).cloned()
+}
+
+pub fn set_cached_save_header(path: PathBuf, header: OriginalSaveHeader) {
+    if let Ok(mut guard) = SAVE_HEADER_CACHE.lock() {
+        let map = guard.get_or_insert_with(HashMap::new);
+        map.insert(path, header);
+    }
+}
+
+pub fn invalidate_cached_save_header(path: &Path) {
+    if let Ok(mut guard) = SAVE_HEADER_CACHE.lock() {
+        if let Some(map) = guard.as_mut() {
+            map.remove(path);
+        }
+    }
+}
+
+fn write_rgba_png_direct(path: &Path, img: &crate::assets::RgbaImage, opaque: bool) -> Result<()> {
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    use image::ImageEncoder;
+
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let expected_len = (img.width as usize)
+        .checked_mul(img.height as usize)
+        .and_then(|px| px.checked_mul(4))
+        .ok_or_else(|| anyhow!("invalid rgba dimensions {}x{}", img.width, img.height))?;
+    if img.rgba.len() != expected_len {
+        bail!("invalid rgba buffer for {}x{} image", img.width, img.height);
+    }
+    let mut rgba_buf = img.rgba.clone();
+    if opaque {
+        for px in rgba_buf.chunks_exact_mut(4) {
+            px[3] = 255;
+        }
+    }
+    let mut png_bytes = Vec::with_capacity(expected_len / 2);
+    let encoder = PngEncoder::new_with_quality(
+        &mut png_bytes,
+        CompressionType::Fast,
+        FilterType::NoFilter,
+    );
+    encoder.write_image(
+        &rgba_buf,
+        img.width,
+        img.height,
+        image::ColorType::Rgba8,
+    )?;
+    fs::write(path, png_bytes)?;
+    crate::resource::record_game_file_written(path);
+    Ok(())
+}
+
+fn write_rgba_bmp_direct(path: &Path, img: &crate::assets::RgbaImage) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let width = img.width;
+    let height = img.height;
+    if width == 0 || height == 0 {
+        bail!("invalid zero-sized bmp image {}x{}", width, height);
+    }
+    let pixel_size = width.saturating_mul(height).saturating_mul(4);
+    let file_size = 14u32.saturating_add(40).saturating_add(pixel_size);
+    let mut out = Vec::with_capacity(file_size as usize);
+
+    out.extend_from_slice(b"BM");
+    out.extend_from_slice(&file_size.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&0u16.to_le_bytes());
+    out.extend_from_slice(&(14u32 + 40).to_le_bytes());
+
+    out.extend_from_slice(&40u32.to_le_bytes());
+    out.extend_from_slice(&(width as i32).to_le_bytes());
+    out.extend_from_slice(&(-(height as i32)).to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&32u16.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&pixel_size.to_le_bytes());
+    out.extend_from_slice(&0i32.to_le_bytes());
+    out.extend_from_slice(&0i32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+
+    for px in img.rgba.chunks_exact(4) {
+        out.push(px[2]); // B
+        out.push(px[1]); // G
+        out.push(px[0]); // R
+        out.push(px[3]); // A
+    }
+    fs::write(path, out)?;
+    crate::resource::record_game_file_written(path);
+    Ok(())
+}
+
+fn execute_save_task(task: SaveWriterTask) {
+    match task {
+        SaveWriterTask::FileBytes { path, bytes } => {
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            if let Err(err) = fs::write(&path, &bytes) {
+                eprintln!("[SG_SAVE_ASYNC] write failed for {}: {err:#}", path.display());
+            } else {
+                crate::resource::record_game_file_written(&path);
+            }
+            remove_pending_bytes(&path);
+        }
+        SaveWriterTask::PngImage { path, image, opaque } => {
+            let _ = write_rgba_png_direct(&path, &image, opaque);
+        }
+        SaveWriterTask::BmpImage { path, image } => {
+            let _ = write_rgba_bmp_direct(&path, &image);
+        }
+    }
+}
+
+pub fn enqueue_save_task(task: SaveWriterTask) {
+    match &task {
+        SaveWriterTask::FileBytes { path, bytes } => {
+            set_pending_bytes(path.clone(), bytes.clone());
+            if bytes.len() >= LEGACY_SAVE_HEADER_SIZE {
+                if let Ok(header) = OriginalSaveHeader::from_file_prefix(
+                    &bytes[..bytes.len().min(SAVE_HEADER_SIZE)],
+                    bytes.len(),
+                ) {
+                    set_cached_save_header(path.clone(), header);
+                }
+            }
+            crate::resource::record_game_file_written(path);
+        }
+        _ => {}
+    }
+
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    {
+        let mut guard = match SAVE_WRITER_SENDER.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if guard.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel::<SaveWriterTask>();
+            let _ = std::thread::Builder::new()
+                .name("siglus_save_io".into())
+                .spawn(move || {
+                    while let Ok(t) = rx.recv() {
+                        execute_save_task(t);
+                    }
+                });
+            *guard = Some(tx);
+        }
+        if let Some(ref sender) = *guard {
+            let _ = sender.send(task);
+            return;
+        }
+    }
+
+    execute_save_task(task);
+}
+
 #[derive(Default)]
 struct CachedGlobalSavePayloads {
     global_stream: Option<(PathBuf, Vec<u8>)>,
@@ -1147,12 +1392,11 @@ pub fn write_local_save_file(
     let header = OriginalSaveHeader::from_slot(slot, packed.len());
     let mut out = header.to_bytes();
     out.extend_from_slice(&packed);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create save dir {}", parent.display()))?;
-    }
-    fs::write(path, out).with_context(|| format!("write save file {}", path.display()))?;
-    crate::resource::record_game_file_written(path);
+    set_cached_save_header(path.to_path_buf(), header);
+    enqueue_save_task(SaveWriterTask::FileBytes {
+        path: path.to_path_buf(),
+        bytes: out,
+    });
     Ok(())
 }
 
@@ -1164,8 +1408,12 @@ pub fn write_slot_file(path: &Path, slot: &SaveSlotState) -> Result<()> {
 pub fn read_local_save_file(
     path: &Path,
 ) -> Result<(OriginalSaveHeader, OriginalLocalSaveEnvelope)> {
-    let data = crate::resource::read_file_bytes(path)
-        .with_context(|| format!("read save file {}", path.display()))?;
+    let data = if let Some(bytes) = get_pending_bytes(path) {
+        bytes
+    } else {
+        crate::resource::read_file_bytes(path)
+            .with_context(|| format!("read save file {}", path.display()))?
+    };
     if data.len() < LEGACY_SAVE_HEADER_SIZE {
         bail!("save file too short: {}", path.display());
     }
@@ -1244,24 +1492,26 @@ pub fn write_global_save_file(project_dir: &Path, global_stream: &[u8]) -> Resul
         minor_version: 0,
         global_data_size: packed.len() as i32,
     };
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create save dir {}", parent.display()))?;
-    }
     let mut out = header.to_bytes();
     out.extend_from_slice(&packed);
-    fs::write(&path, out).with_context(|| format!("write global save file {}", path.display()))?;
-    crate::resource::record_game_file_written(&path);
     if let Ok(mut guard) = CACHED_GLOBAL_SAVE_PAYLOADS.lock() {
-        guard.global_stream = Some((path, global_stream.to_vec()));
+        guard.global_stream = Some((path.clone(), global_stream.to_vec()));
     }
+    enqueue_save_task(SaveWriterTask::FileBytes {
+        path,
+        bytes: out,
+    });
     Ok(())
 }
 
 pub fn read_global_save_file(project_dir: &Path) -> Result<(OriginalGlobalSaveHeader, Vec<u8>)> {
     let path = save_dir(project_dir).join("global.sav");
-    let data = crate::resource::read_file_bytes(&path)
-        .with_context(|| format!("read global save file {}", path.display()))?;
+    let data = if let Some(bytes) = get_pending_bytes(&path) {
+        bytes
+    } else {
+        crate::resource::read_file_bytes(&path)
+            .with_context(|| format!("read global save file {}", path.display()))?
+    };
     if data.len() < GLOBAL_SAVE_HEADER_SIZE {
         bail!("global save file too short: {}", path.display());
     }
@@ -1307,21 +1557,19 @@ pub fn write_read_save_file(project_dir: &Path, scene_rows: &[(String, Vec<u8>)]
         }
     }
     let packed = pack_buffer(&raw_stream);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create save dir {}", parent.display()))?;
-    }
     let mut out = Vec::with_capacity(16 + packed.len());
     push_i32(&mut out, 1);
     push_i32(&mut out, 0);
     push_i32(&mut out, packed.len().min(i32::MAX as usize) as i32);
     push_i32(&mut out, scene_rows.len().min(i32::MAX as usize) as i32);
     out.extend_from_slice(&packed);
-    fs::write(&path, out).with_context(|| format!("write read save file {}", path.display()))?;
-    crate::resource::record_game_file_written(&path);
     if let Ok(mut guard) = CACHED_GLOBAL_SAVE_PAYLOADS.lock() {
-        guard.read_stream = Some((path, raw_stream));
+        guard.read_stream = Some((path.clone(), raw_stream));
     }
+    enqueue_save_task(SaveWriterTask::FileBytes {
+        path,
+        bytes: out,
+    });
     Ok(())
 }
 
@@ -1329,8 +1577,12 @@ pub fn write_read_save_file(project_dir: &Path, scene_rows: &[(String, Vec<u8>)]
 /// The caller performs the original name lookup and exact flag-count check.
 pub fn read_read_save_file(project_dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
     let path = save_dir(project_dir).join("read.sav");
-    let data = crate::resource::read_file_bytes(&path)
-        .with_context(|| format!("read read save file {}", path.display()))?;
+    let data = if let Some(bytes) = get_pending_bytes(&path) {
+        bytes
+    } else {
+        crate::resource::read_file_bytes(&path)
+            .with_context(|| format!("read read save file {}", path.display()))?
+    };
     if data.len() < 16 {
         bail!("read save header too short: {}", data.len());
     }
@@ -1397,24 +1649,26 @@ pub fn write_config_save_file(project_dir: &Path, config_stream: &[u8]) -> Resul
         minor_version: 4,
         config_data_size: packed.len() as i32,
     };
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create save dir {}", parent.display()))?;
-    }
     let mut out = header.to_bytes();
     out.extend_from_slice(&packed);
-    fs::write(&path, out).with_context(|| format!("write config save file {}", path.display()))?;
-    crate::resource::record_game_file_written(&path);
     if let Ok(mut guard) = CACHED_GLOBAL_SAVE_PAYLOADS.lock() {
-        guard.config_stream = Some((path, config_stream.to_vec()));
+        guard.config_stream = Some((path.clone(), config_stream.to_vec()));
     }
+    enqueue_save_task(SaveWriterTask::FileBytes {
+        path,
+        bytes: out,
+    });
     Ok(())
 }
 
 pub fn read_config_save_file(project_dir: &Path) -> Result<(OriginalConfigSaveHeader, Vec<u8>)> {
     let path = save_dir(project_dir).join("config.sav");
-    let data = crate::resource::read_file_bytes(&path)
-        .with_context(|| format!("read config save file {}", path.display()))?;
+    let data = if let Some(bytes) = get_pending_bytes(&path) {
+        bytes
+    } else {
+        crate::resource::read_file_bytes(&path)
+            .with_context(|| format!("read config save file {}", path.display()))?
+    };
     if data.len() < CONFIG_SAVE_HEADER_SIZE {
         bail!("config save file too short: {}", path.display());
     }

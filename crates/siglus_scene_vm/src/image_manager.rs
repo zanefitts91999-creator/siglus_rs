@@ -358,31 +358,37 @@ fn compose_g00_cut(dst: &mut RgbaImage, src: &RgbaImage, x: i32, y: i32, blend_t
             if ra <= 0 {
                 continue;
             }
-            let blend_channel = |sc: i64, dc: i64| -> i64 {
-                match blend_type {
-                    // Tona3's composed texture path has dedicated add and
-                    // multiply equations. Every other enum value follows the
-                    // normal alpha path in f_draw_alphablend().
-                    1 => {
-                        let mixed = (sc + dc).min(255);
-                        (sa * da * mixed + sa * (255 - da) * sc + (255 - sa) * da * dc) / ra / 255
-                    }
-                    3 => {
-                        let mixed = sc * dc / 255;
-                        (sa * da * mixed + sa * (255 - da) * sc + (255 - sa) * da * dc) / ra / 255
-                    }
-                    _ => {
-                        let work1 = (255 - sa) * da;
-                        let work2 = 255 * sa * sc;
-                        ((work2 + work1 * dc) >> 8) / ra
-                    }
-                }
-            };
-
-            dst.rgba[di] = blend_channel(sr, dr).clamp(0, 255) as u8;
-            dst.rgba[di + 1] = blend_channel(sg, dg).clamp(0, 255) as u8;
-            dst.rgba[di + 2] = blend_channel(sb, db).clamp(0, 255) as u8;
-            dst.rgba[di + 3] = ra.clamp(0, 255) as u8;
+            if !matches!(blend_type, 1 | 3) {
+                let work1 = (255 - sa) * da;
+                let work2_base = 255 * sa;
+                let inv_ra = (1i64 << 24) / ra;
+                let blend = |sc: i64, dc: i64| -> u8 {
+                    let num = (work2_base * sc + work1 * dc) >> 8;
+                    ((num * inv_ra) >> 24).clamp(0, 255) as u8
+                };
+                dst.rgba[di] = blend(sr, dr);
+                dst.rgba[di + 1] = blend(sg, dg);
+                dst.rgba[di + 2] = blend(sb, db);
+                dst.rgba[di + 3] = ra.clamp(0, 255) as u8;
+            } else {
+                let blend_channel = |sc: i64, dc: i64| -> u8 {
+                    let val = match blend_type {
+                        1 => {
+                            let mixed = (sc + dc).min(255);
+                            (sa * da * mixed + sa * (255 - da) * sc + (255 - sa) * da * dc) / ra / 255
+                        }
+                        _ => {
+                            let mixed = sc * dc / 255;
+                            (sa * da * mixed + sa * (255 - da) * sc + (255 - sa) * da * dc) / ra / 255
+                        }
+                    };
+                    val.clamp(0, 255) as u8
+                };
+                dst.rgba[di] = blend_channel(sr, dr);
+                dst.rgba[di + 1] = blend_channel(sg, dg);
+                dst.rgba[di + 2] = blend_channel(sb, db);
+                dst.rgba[di + 3] = ra.clamp(0, 255) as u8;
+            }
         }
     }
 }

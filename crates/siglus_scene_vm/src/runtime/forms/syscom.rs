@@ -1082,14 +1082,12 @@ pub(crate) fn capture_for_local_save(
         resize_rgba(img, w, h)
     };
     let path = original_save::save_dir(&ctx.project_dir).join(format!("{capture_time}.png"));
-    if let Err(err) = write_rgba_png_opaque(&path, &resized) {
-        log::error!(
-            "GLOBAL.CAPTURE_FOR_LOCAL_SAVE failed to write {}: {err:#}",
-            path.display()
-        );
-        return 0;
-    }
-    ctx.images.cache_file_image(&path, resized);
+    ctx.images.cache_file_image(&path, resized.clone());
+    original_save::enqueue_save_task(original_save::SaveWriterTask::PngImage {
+        path,
+        image: resized,
+        opaque: true,
+    });
     capture_time
 }
 
@@ -1114,17 +1112,21 @@ fn write_slot_thumb_for_save_no(ctx: &mut CommandContext, save_no: usize) {
             config.thumb_type
         );
     }
-    let result = match config.thumb_type {
-        SaveThumbType::Bmp => write_rgba_bmp_top_down(&path, &img),
-        SaveThumbType::Png => write_rgba_png_opaque(&path, &img),
-    };
-    if let Err(err) = result {
-        eprintln!(
-            "[SG_SAVE] failed to write save thumb {}: {err:#}",
-            path.display()
-        );
-    } else {
-        ctx.images.cache_file_image(&path, img);
+    ctx.images.cache_file_image(&path, img.clone());
+    match config.thumb_type {
+        SaveThumbType::Bmp => {
+            original_save::enqueue_save_task(original_save::SaveWriterTask::BmpImage {
+                path,
+                image: img,
+            });
+        }
+        SaveThumbType::Png => {
+            original_save::enqueue_save_task(original_save::SaveWriterTask::PngImage {
+                path,
+                image: img,
+                opaque: true,
+            });
+        }
     }
 }
 

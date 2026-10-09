@@ -316,6 +316,16 @@ fn transparent_missing_g00_cut() -> RgbaImage {
     }
 }
 
+#[inline(always)]
+fn copy_bgra_to_rgba_row(dst: &mut [u8], src: &[u8]) {
+    for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+        d[0] = s[2];
+        d[1] = s[1];
+        d[2] = s[0];
+        d[3] = s[3];
+    }
+}
+
 fn bgra_to_rgba_inplace(mut bgra: Vec<u8>) -> Vec<u8> {
     for px in bgra.as_chunks_mut::<4>().0.iter_mut() {
         let b = px[0];
@@ -708,11 +718,11 @@ fn extract_g02_part(part_bytes: &[u8]) -> Result<RgbaImage> {
             if dst_end > dib.len() {
                 bail!("g02 block write out of bounds");
             }
-            dib[dst_row_off..dst_end].copy_from_slice(&src[src_row_off..src_row_off + bw * 4]);
+            copy_bgra_to_rgba_row(&mut dib[dst_row_off..dst_end], &src[src_row_off..src_row_off + bw * 4]);
         }
     }
 
-    let rgba = bgra_to_rgba_inplace(dib);
+    let rgba = dib;
 
     Ok(RgbaImage {
         width: out_w,

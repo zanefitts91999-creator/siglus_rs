@@ -485,8 +485,10 @@ impl SiglusHost {
             return;
         }
         if down {
+            self.vm.ctx.input.on_joypad_key_down(button);
             self.vm.ctx.script_input.on_joypad_key_down(button);
         } else {
+            self.vm.ctx.input.on_joypad_key_up(button);
             self.vm.ctx.script_input.on_joypad_key_up(button);
         }
         self.script_needs_pump = true;

@@ -74,7 +74,8 @@ enum SlotSound {
 }
 
 use crate::audio::bgm::{
-    KoeSource, decode_bgm_to_wav_bytes, decode_ovk_entry_by_no_to_wav_bytes, resolve_koe_source,
+    KoeSource, decode_bgm_to_wav_bytes, decode_ovk_entry_by_no_to_wav_bytes, extract_koe_ogg_bytes,
+    resolve_koe_source,
 };
 use crate::audio::{AudioHub, TrackKind};
 
@@ -534,6 +535,42 @@ impl SfxEngine {
     ) -> Result<()> {
         if slot >= self.slots.len() {
             bail!("slot out of range: {slot}");
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Ok((ogg_bytes, desc)) = extract_koe_ogg_bytes(&self.project_dir, koe_no) {
+            let duration_ms = match siglus_assets::vorbis::ogg_vorbis_decoded_len(Cursor::new(&ogg_bytes)) {
+                Ok((channels, sample_rate, samples)) => {
+                    let data_size = u64::from((samples * 2) as u32);
+                    let byte_rate = u64::from(sample_rate) * 2 * u64::from(channels);
+                    if byte_rate > 0 {
+                        Some((data_size * 1000) / byte_rate)
+                    } else {
+                        Some(2000)
+                    }
+                }
+                Err(_) => Some(2000),
+            };
+            let sound = if audio.is_enabled() {
+                match StreamingSoundData::from_cursor(Cursor::new(ogg_bytes)) {
+                    Ok(data) => Some(SlotSound::Streaming(data)),
+                    Err(_) => None,
+                }
+            } else {
+                None
+            };
+            if sound.is_some() || !audio.is_enabled() {
+                return self.start_in_slot(
+                    audio,
+                    slot,
+                    &desc,
+                    sound,
+                    duration_ms,
+                    loop_flag,
+                    fade_in_ms,
+                    ready_only,
+                );
+            }
         }
 
         let wav = self.decode_koe_no(koe_no)?;

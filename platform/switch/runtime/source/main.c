@@ -42,6 +42,7 @@ static atomic_uint_fast64_t audio_pump_ticks_acc;
 extern void* siglus_switch_engine_create(const char* project_dir, uint32_t width, uint32_t height);
 extern bool siglus_switch_engine_step(void* host, uint32_t dt_ms);
 extern void siglus_switch_engine_gamepad(void* host, uint8_t button, bool down);
+extern void siglus_switch_engine_stick(void* host, int32_t stick, float dx, float dy);
 extern void siglus_switch_engine_touch(void* host, int32_t phase, double x, double y);
 extern void siglus_switch_engine_destroy(void* host);
 extern void siglus_switch_audio_render_i16(int16_t* dst, size_t frames);
@@ -341,6 +342,16 @@ int main(void) {
     siglus_switch_log_message("siglus_switch: main-loop enter\n");
     while (appletMainLoop()) {
         padUpdate(&pad);
+        const HidAnalogStickState stick_l = padGetStickPos(&pad, 0);
+        const HidAnalogStickState stick_r = padGetStickPos(&pad, 1);
+        const float lx = (float) stick_l.x / 32767.0f;
+        const float ly = (float) stick_l.y / 32767.0f;
+        const float rx = (float) stick_r.x / 32767.0f;
+        const float ry = (float) stick_r.y / 32767.0f;
+        if (engine != NULL) {
+            siglus_switch_engine_stick(engine, 0, lx, ly);
+            siglus_switch_engine_stick(engine, 1, rx, ry);
+        }
         const uint64_t buttons_down = padGetButtonsDown(&pad);
         const uint64_t buttons_up = padGetButtonsUp(&pad);
         if (engine != NULL) {

@@ -12524,7 +12524,8 @@ impl<'a> SceneVm<'a> {
                         .save_slots
                         .resize_with(req.index + 1, Default::default);
                 }
-                self.ctx.globals.syscom.save_slots[req.index].header_cache_valid = false;
+                self.ctx.globals.syscom.save_slots[req.index] = slot.clone();
+                self.ctx.globals.syscom.save_slots[req.index].header_cache_valid = true;
             }
             RuntimeSaveKind::Quick => {
                 if self.ctx.globals.syscom.quick_save_slots.len() <= req.index {
@@ -12534,7 +12535,8 @@ impl<'a> SceneVm<'a> {
                         .quick_save_slots
                         .resize_with(req.index + 1, Default::default);
                 }
-                self.ctx.globals.syscom.quick_save_slots[req.index].header_cache_valid = false;
+                self.ctx.globals.syscom.quick_save_slots[req.index] = slot.clone();
+                self.ctx.globals.syscom.quick_save_slots[req.index].header_cache_valid = true;
             }
             RuntimeSaveKind::End => {
                 self.ctx.globals.syscom.end_save_exists = true;

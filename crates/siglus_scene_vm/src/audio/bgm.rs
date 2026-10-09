@@ -655,6 +655,53 @@ pub fn resolve_koe_source(project_dir: &Path, koe_no: i64) -> Result<KoeSource> 
     bail!("koe resource not found: koe_no={koe_no}")
 }
 
+pub fn extract_koe_ogg_bytes(project_dir: &Path, koe_no: i64) -> Result<(Vec<u8>, String)> {
+    let resolved = resolve_koe_source(project_dir, koe_no)?;
+    match resolved {
+        KoeSource::File(path) => extract_ogg_bytes(&path, None),
+        KoeSource::OvkEntryByNo { path, entry_no } => {
+            let requested = path.as_path();
+            let resolved_path = crate::resource::resolve_game_file(requested)?
+                .with_context(|| format!("OVK file not found: {}", requested.display()))?;
+            #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+            {
+                let bytes = read_audio_container_bytes(resolved_path.as_path())?;
+                let entries = parse_ovk_entries_from_bytes(&bytes)?;
+                let idx = entries
+                    .iter()
+                    .position(|e| e.no == entry_no)
+                    .with_context(|| {
+                        format!(
+                            "OVK entry not found: no={} file={}",
+                            entry_no,
+                            requested.display()
+                        )
+                    })?;
+                let ogg = extract_ovk_entry_from_bytes(&bytes, idx)?;
+                Ok((ogg, format!("OVK:{}#{}", requested.display(), entry_no)))
+            }
+            #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+            {
+                let pack = ovk::OvkPack::open(resolved_path.as_path())
+                    .with_context(|| format!("open OVK: {}", requested.display()))?;
+                let idx = pack
+                    .entries()
+                    .iter()
+                    .position(|e| e.no == entry_no)
+                    .with_context(|| {
+                        format!(
+                            "OVK entry not found: no={} file={}",
+                            entry_no,
+                            requested.display()
+                        )
+                    })?;
+                let ogg = pack.extract_entry(idx).context("extract OVK entry")?;
+                Ok((ogg, format!("OVK:{}#{}", requested.display(), entry_no)))
+            }
+        }
+    }
+}
+
 fn path_is_file(path: &Path) -> bool {
     crate::resource::game_file_exists(path)
 }
