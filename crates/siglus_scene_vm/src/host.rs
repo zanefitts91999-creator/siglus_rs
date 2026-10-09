@@ -408,7 +408,14 @@ impl SiglusHost {
             crate::switch_host::PUMP_US_ACC.fetch_add(start.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed);
         }
         self.redraw()?;
-        Ok(self.pending_exit || (self.vm.is_halted() && self.flow.stack.is_empty()))
+        #[cfg(target_os = "horizon")]
+        {
+            Ok(self.pending_exit)
+        }
+        #[cfg(not(target_os = "horizon"))]
+        {
+            Ok(self.pending_exit || (self.vm.is_halted() && self.flow.stack.is_empty()))
+        }
     }
 
     pub fn mouse_move(&mut self, x: f64, y: f64) {
@@ -1358,7 +1365,7 @@ impl SiglusHost {
                     }
                     if !running || halted {
                         self.flow.pop();
-                        if !self.flow.booted_menu && cur_scene == self.boot.start_scene {
+                        if self.flow.stack.is_empty() {
                             self.flow.push(ProcType::ReturnToMenu, 0);
                         }
                         continue;
@@ -1557,6 +1564,7 @@ impl SiglusHost {
                     self.flow.pop();
                     crate::runtime::forms::syscom::write_global_save(&self.vm.ctx);
                     self.vm.ctx.globals.system.active_flag = false;
+                    self.pending_exit = true;
                     continue;
                 }
                 ProcType::GameTimerStart => {

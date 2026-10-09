@@ -302,8 +302,10 @@ impl OriginalSaveHeader {
             let end = size
                 .checked_add(header.data_size as usize)
                 .and_then(|end| end.checked_add(extra as usize));
-            if end == Some(file_len) {
-                return Ok(header);
+            if let Some(expected) = end {
+                if file_len == 0 || file_len <= size || file_len >= expected {
+                    return Ok(header);
+                }
             }
         }
         bail!("unrecognized or truncated local save layout: file size {file_len}")
@@ -1084,10 +1086,12 @@ pub fn read_header_from_path(path: &Path) -> Result<OriginalSaveHeader> {
         if data.len() < LEGACY_SAVE_HEADER_SIZE {
             bail!("save file too short: {}", path.display());
         }
-        let file_len = file
-            .seek(SeekFrom::End(0))
+        let file_len = crate::resource::game_file_len(path)
+            .ok()
             .map(|l| l as usize)
-            .unwrap_or(bytes_read);
+            .or_else(|| file.metadata().ok().map(|m| m.len() as usize))
+            .or_else(|| file.seek(SeekFrom::End(0)).ok().map(|l| l as usize))
+            .unwrap_or(0);
         let header = OriginalSaveHeader::from_file_prefix(&data, file_len)?;
         set_cached_save_header(path.to_path_buf(), header.clone());
         Ok(header)
@@ -1182,6 +1186,8 @@ pub enum SaveWriterTask {
 static PENDING_SAVE_BYTES: Mutex<Option<HashMap<PathBuf, Vec<u8>>>> = Mutex::new(None);
 static SAVE_HEADER_CACHE: Mutex<Option<HashMap<PathBuf, OriginalSaveHeader>>> = Mutex::new(None);
 static SAVE_WRITER_SENDER: Mutex<Option<std::sync::mpsc::Sender<SaveWriterTask>>> =
+    Mutex::new(None);
+static SAVE_WRITER_THREAD: Mutex<Option<std::thread::JoinHandle<()>>> =
     Mutex::new(None);
 
 fn get_pending_bytes(path: &Path) -> Option<Vec<u8>> {
@@ -1350,13 +1356,18 @@ pub fn enqueue_save_task(task: SaveWriterTask) {
         };
         if guard.is_none() {
             let (tx, rx) = std::sync::mpsc::channel::<SaveWriterTask>();
-            let _ = std::thread::Builder::new()
+            let handle = std::thread::Builder::new()
                 .name("siglus_save_io".into())
                 .spawn(move || {
                     while let Ok(t) = rx.recv() {
                         execute_save_task(t);
                     }
                 });
+            if let Ok(handle) = handle {
+                if let Ok(mut th_guard) = SAVE_WRITER_THREAD.lock() {
+                    *th_guard = Some(handle);
+                }
+            }
             *guard = Some(tx);
         }
         if let Some(ref sender) = *guard {
@@ -1366,6 +1377,23 @@ pub fn enqueue_save_task(task: SaveWriterTask) {
     }
 
     execute_save_task(task);
+}
+
+pub fn shutdown_save_writer() {
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    {
+        if let Ok(mut guard) = SAVE_WRITER_SENDER.lock() {
+            *guard = None;
+        }
+        let handle = if let Ok(mut th_guard) = SAVE_WRITER_THREAD.lock() {
+            th_guard.take()
+        } else {
+            None
+        };
+        if let Some(handle) = handle {
+            let _ = handle.join();
+        }
+    }
 }
 
 #[derive(Default)]

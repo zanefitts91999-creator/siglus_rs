@@ -290,6 +290,11 @@ static void start_recording(void) {
 static void submit_recorded(void) {
     DkCmdList list = dkCmdBufFinishList(current->cmdbuf);
     dkQueueSubmitCommands(queue, list);
+    memset(&current_draw_state, 0, sizeof(current_draw_state));
+    dkCmdBufBindImageDescriptorSet(current->cmdbuf, dkMemBlockGetGpuAddr(descriptor_memory), MaxTextures);
+    dkCmdBufBindSamplerDescriptorSet(current->cmdbuf,
+        dkMemBlockGetGpuAddr(descriptor_memory) + MaxTextures * sizeof(DkImageDescriptor),
+        SiglusGpuSamplerCount);
 }
 
 void siglus_gpu_init(void) {
@@ -599,11 +604,11 @@ void siglus_gpu_begin_pass(int32_t target, const float* clear_color, bool clear_
     }
     /* Earlier passes' targets and uploads are read from here on; new
      * texture descriptors (written by CPU to CpuUncached|GpuCached memory)
-     * require L2 invalidation when textures_dirty is set. */
+     * require L2 invalidation. Reset current_draw_state for the new pass. */
     dkCmdBufBarrier(cmdbuf, DkBarrier_Full,
-                    DkInvalidateFlags_Image | DkInvalidateFlags_Descriptors |
-                        (textures_dirty ? DkInvalidateFlags_L2Cache : 0));
+                    DkInvalidateFlags_Image | DkInvalidateFlags_Descriptors | DkInvalidateFlags_L2Cache);
     textures_dirty = false;
+    memset(&current_draw_state, 0, sizeof(current_draw_state));
     dkCmdBufBindRenderTarget(cmdbuf, &color_view, &depth_view);
     const DkScissor scissor = { 0, 0, width, height };
     dkCmdBufSetScissors(cmdbuf, 0, &scissor, 1);
@@ -677,6 +682,7 @@ void siglus_gpu_draw(const SiglusGpuDraw* d) {
 
     if (d->blend_enable) {
         if (!current_draw_state.valid ||
+            !current_draw_state.blend_enable ||
             current_draw_state.color_op != d->color_op ||
             current_draw_state.color_src != d->color_src ||
             current_draw_state.color_dst != d->color_dst ||
@@ -731,7 +737,7 @@ void siglus_gpu_draw(const SiglusGpuDraw* d) {
         current_draw_state.stencil_pass = d->stencil_pass;
     }
     if (d->stencil_enable) {
-        if (!current_draw_state.valid || current_draw_state.stencil_ref != d->stencil_ref) {
+        if (!current_draw_state.valid || !current_draw_state.stencil_enable || current_draw_state.stencil_ref != d->stencil_ref) {
             dkCmdBufSetStencil(cmdbuf, DkFace_FrontAndBack, 0xff, d->stencil_ref, 0xff);
             current_draw_state.stencil_ref = d->stencil_ref;
         }

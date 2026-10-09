@@ -411,4 +411,5 @@ pub unsafe extern "C" fn siglus_switch_engine_destroy(host: *mut SwitchHost) {
         host.host.persist_global_if_changed(Some(last));
         drop(host);
     }
+    crate::original_save::shutdown_save_writer();
 }
