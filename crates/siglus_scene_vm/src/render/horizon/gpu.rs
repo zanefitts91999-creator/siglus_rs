@@ -257,7 +257,7 @@ impl Texture {
         if image.rgba.len() < width as usize * height as usize * 4 {
             return None;
         }
-        let levels = 32 - width.max(height).leading_zeros();
+        let levels = 1;
         let id = unsafe { siglus_gpu_texture_create(width, height, levels, 0) };
         if id < 0 {
             return None;
@@ -272,24 +272,10 @@ impl Texture {
         Some(texture)
     }
 
-    /// Rewrites the pixels (same size) and the mip levels.
-    ///
-    /// The levels are reduced here rather than blitted on the GPU: the 2D
-    /// engine's block-linear mip blits are not reliable under emulation,
-    /// and every scaled sprite samples them.
+    /// Rewrites the base texture pixels without CPU mipmap reduction overhead.
     pub(super) fn write(&self, image: &crate::assets::RgbaImage) {
-        let (mut width, mut height) = (self.width, self.height);
+        let (width, height) = (self.width, self.height);
         unsafe { siglus_gpu_texture_upload(self.id, 0, image.rgba.as_ptr(), width, height) };
-        let mut level = 1;
-        let mut above: std::borrow::Cow<'_, [u8]> = std::borrow::Cow::Borrowed(&image.rgba);
-        while width > 1 || height > 1 {
-            let next = reduce(&above, width, height);
-            width = (width / 2).max(1);
-            height = (height / 2).max(1);
-            unsafe { siglus_gpu_texture_upload(self.id, level, next.as_ptr(), width, height) };
-            above = std::borrow::Cow::Owned(next);
-            level += 1;
-        }
     }
 
     /// A render target with depth and stencil.

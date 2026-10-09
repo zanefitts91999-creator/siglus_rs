@@ -257,7 +257,7 @@ void siglus_gpu_init(void) {
         if (i == SiglusGpuSampler_Linear) {
             sampler.minFilter = DkFilter_Linear;
             sampler.magFilter = DkFilter_Linear;
-            sampler.mipFilter = DkMipFilter_Linear;
+            sampler.mipFilter = DkMipFilter_None;
         }
         dkSamplerDescriptorInitialize(&sampler_descriptors[i], &sampler);
     }
