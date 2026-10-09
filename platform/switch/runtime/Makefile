@@ -11,13 +11,13 @@ NACPTOOL := $(DEVKITPRO)/tools/bin/nacptool
 UAM := $(DEVKITPRO)/tools/bin/uam
 
 CPPFLAGS := -I$(DEVKITPRO)/libnx/include
-CFLAGS := -std=gnu17 -O2 -g -Wall -Wextra -ffunction-sections -fdata-sections \
+CFLAGS := -std=gnu17 -O3 -g -Wall -Wextra -ffunction-sections -fdata-sections \
 	-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE $(CPPFLAGS)
 LDFLAGS := -specs=$(DEVKITPRO)/libnx/switch.specs -g \
 	-march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE \
 	-Wl,--gc-sections -Wl,-Map,$(TARGET).map \
 	-Wl,--wrap=nvMapCreate -Wl,--wrap=nvAddressSpaceMap -L$(DEVKITPRO)/libnx/lib
-LDLIBS := -ldeko3dd -lnx -lm
+LDLIBS := -ldeko3d -lnx -lm
 RUST_LIB := ../../../target/aarch64-switch/release/libsiglus_scene_vm.a
 # Crates patched for the pinned nightly (see platform/switch/patches/README.md).
 # Opt-in and scoped to this build: nothing in the current NRO depends on

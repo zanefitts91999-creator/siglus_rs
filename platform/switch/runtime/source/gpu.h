@@ -86,3 +86,4 @@ void siglus_gpu_begin_pass(int32_t target, const float* clear_color, bool clear_
 void siglus_gpu_clear_stencil(uint8_t value);
 void siglus_gpu_draw(const SiglusGpuDraw* draw);
 void siglus_gpu_end_frame(bool present);
+void siglus_gpu_get_bench_stats(uint64_t* fence_ticks, uint64_t* acq_ticks);

@@ -14,7 +14,7 @@ enum {
     DisplayWidth = 1280,
     DisplayHeight = 720,
     FramebufferCount = 3,
-    FrameSlots = 2,
+    FrameSlots = 3,
     MaxTextures = 4096,
     CodeMemorySize = 2 * 1024 * 1024,
     CommandChunkSize = 1024 * 1024,
@@ -75,6 +75,15 @@ static int display_slot = -1; /* acquired swapchain image this frame */
 static bool textures_dirty;     /* uploads or new descriptors since the last barrier */
 static bool pass_skipped;      /* the display could not be acquired */
 static unsigned acquire_failures;
+static uint64_t total_fence_wait_ticks;
+static uint64_t total_acquire_ticks;
+
+void siglus_gpu_get_bench_stats(uint64_t* fence_ticks, uint64_t* acq_ticks) {
+    if (fence_ticks) *fence_ticks = total_fence_wait_ticks;
+    if (acq_ticks) *acq_ticks = total_acquire_ticks;
+    total_fence_wait_ticks = 0;
+    total_acquire_ticks = 0;
+}
 
 static void log_result(const char* what, int value) {
     char message[160];
@@ -130,7 +139,7 @@ static DkGpuAddr ring_alloc(uint32_t size, uint32_t alignment, void** cpu) {
  * a frame, with that frame's slot; between frames, with the slot of the
  * frame just finished (the other one). */
 static void defer(DkMemBlock memory, int32_t texture) {
-    FrameSlot* slot = recording ? current : &slots[(frame_number + 1) % FrameSlots];
+    FrameSlot* slot = recording ? current : &slots[(frame_number + FrameSlots - 1) % FrameSlots];
     if (slot->deferred_count >= MaxDeferred) {
         /* Rare: wait for the GPU and free right away. */
         dkQueueWaitIdle(queue);
@@ -406,7 +415,9 @@ bool siglus_gpu_begin_frame(void) {
     if (slot->fence_pending) {
         /* Ryujinx can spend hundreds of milliseconds compiling a pipeline;
          * one second avoids treating that as a wedged queue. */
+        const uint64_t t0 = armGetSystemTick();
         const DkResult result = dkFenceWait(&slot->fence, 1000 * 1000 * 1000LL);
+        total_fence_wait_ticks += (armGetSystemTick() - t0);
         if (result != DkResult_Success) {
             log_result("frame fence wait", (int) result);
             return false;
@@ -429,7 +440,9 @@ static bool acquire_display(void) {
     DkFence acquire_fence = {0};
     *(uint32_t*) acquire_fence._storage = 2; /* deko3d Fence::Status_Waiting */
     NvMultiFence* const nv_fence = (NvMultiFence*) (void*) (acquire_fence._storage + sizeof(uint32_t));
+    const uint64_t t0 = armGetSystemTick();
     const Result result = nwindowDequeueBuffer(window, &slot, nv_fence);
+    total_acquire_ticks += (armGetSystemTick() - t0);
     if (R_FAILED(result) || slot < 0 || slot >= FramebufferCount) {
         if (acquire_failures++ == 0) log_result("display acquire failed", (int) result);
         return false;

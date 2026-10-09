@@ -179,6 +179,7 @@ static void initialize_audio(void) {
 
 static void pump_audio(void) {
     if (!audio_driver_initialized) return;
+    bool updated = false;
     for (unsigned i = 0; i < AudioBufferCount; ++i) {
         AudioDriverWaveBuf* wavebuf = &audio_wavebufs[i];
         if (wavebuf->state != AudioDriverWaveBufState_Free &&
@@ -191,8 +192,11 @@ static void pump_audio(void) {
         wavebuf->end_sample_offset = AudioBufferFrames;
         wavebuf->is_looping = false;
         audrvVoiceAddWaveBuf(&audio_driver, 0, wavebuf);
+        updated = true;
     }
-    audrvUpdate(&audio_driver);
+    if (updated) {
+        audrvUpdate(&audio_driver);
+    }
 }
 
 static void exit_audio(void) {
@@ -241,6 +245,8 @@ int main(void) {
     bool first_frame = true;
     unsigned frame_count = 0;
     uint64_t period_start = armGetSystemTick();
+    uint64_t step_ticks_acc = 0;
+    uint64_t audio_ticks_acc = 0;
     siglus_switch_log_message("siglus_switch: main-loop enter\n");
     while (appletMainLoop()) {
         padUpdate(&pad);
@@ -270,19 +276,40 @@ int main(void) {
         }
         touch_active = has_touch;
         if (first_frame) siglus_switch_log_message("siglus_switch: first-frame step begin\n");
+        const uint64_t t0 = armGetSystemTick();
         if (engine != NULL && siglus_switch_engine_step(engine, 16)) {
             break;
         }
+        const uint64_t t1 = armGetSystemTick();
         if (first_frame) siglus_switch_log_message("siglus_switch: first-frame step complete\n");
         /* The engine step rendered and presented the frame. */
         pump_audio();
+        const uint64_t t2 = armGetSystemTick();
+        step_ticks_acc += (t1 - t0);
+        audio_ticks_acc += (t2 - t1);
         first_frame = false;
         if (++frame_count % 600 == 0) {
             const uint64_t now = armGetSystemTick();
-            char message[96];
-            snprintf(message, sizeof(message), "siglus_switch: frame %u, %.1f fps\n", frame_count,
-                     600.0 * armGetSystemTickFreq() / (double) (now - period_start));
+            const double freq = (double) armGetSystemTickFreq();
+            const double elapsed_sec = (double) (now - period_start) / freq;
+            const double fps = 600.0 / elapsed_sec;
+
+            uint64_t fence_ticks = 0, acq_ticks = 0;
+            siglus_gpu_get_bench_stats(&fence_ticks, &acq_ticks);
+
+            const double step_ms = ((double) step_ticks_acc / freq / 600.0) * 1000.0;
+            const double audio_ms = ((double) audio_ticks_acc / freq / 600.0) * 1000.0;
+            const double fence_ms = ((double) fence_ticks / freq / 600.0) * 1000.0;
+            const double acq_ms = ((double) acq_ticks / freq / 600.0) * 1000.0;
+
+            char message[160];
+            snprintf(message, sizeof(message),
+                     "siglus_switch: frame %u, %.1f fps (step=%.2fms [fence=%.2fms, acq=%.2fms], audio=%.2fms)\n",
+                     frame_count, fps, step_ms, fence_ms, acq_ms, audio_ms);
             siglus_switch_log_message(message);
+
+            step_ticks_acc = 0;
+            audio_ticks_acc = 0;
             period_start = now;
         }
     }
