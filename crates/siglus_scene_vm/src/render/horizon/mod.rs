@@ -288,6 +288,10 @@ impl Renderer {
         if !self.begin() {
             return Ok(());
         }
+        self.textures.retain(|key, _| match key {
+            TexKey::Image(index) => images.contains(ImageKey(*index)),
+            TexKey::External(_) => true,
+        });
         self.prepare_emotes(frame);
         // As on the desktop: only frames that sample the drawn scene go
         // through the internal targets.
@@ -474,12 +478,6 @@ impl Renderer {
         self.sprite_verts.clear();
         self.sprite_verts
             .extend(self.plan.verts.iter().map(|v| VertexSprite2dData::from(*v)));
-        // Images the runtime released (`organize_textures`); gpu.c frees
-        // their memory once the frames still reading them are done.
-        self.textures.retain(|key, _| match key {
-            TexKey::Image(index) => images.contains(ImageKey(*index)),
-            TexKey::External(_) => true,
-        });
         for index in 0..self.plan.draws.len() {
             let draw = &self.plan.draws[index];
             let handles = [
@@ -511,13 +509,6 @@ impl Renderer {
         let source = (Arc::as_ptr(&image) as usize, version);
         if let Some(texture) = self.textures.get_mut(&key) {
             if texture.source == source {
-                return Some(texture.id);
-            }
-            // gpu.c orders uploads with the draws, so a texture drawn
-            // earlier this frame can be rewritten in place.
-            if texture.width == image.width.max(1) && texture.height == image.height.max(1) {
-                texture.write(&image);
-                texture.source = source;
                 return Some(texture.id);
             }
         }
@@ -984,6 +975,10 @@ impl FrameCaptureBackend for Renderer {
         if started && !self.begin() {
             anyhow::bail!("GPU frame unavailable for capture");
         }
+        self.textures.retain(|key, _| match key {
+            TexKey::Image(index) => images.contains(ImageKey(*index)),
+            TexKey::External(_) => true,
+        });
         self.prepare_emotes(frame);
         let final_target = self.render_frame_to_targets(images, frame)?;
         let target = &self.targets[final_target as usize];
