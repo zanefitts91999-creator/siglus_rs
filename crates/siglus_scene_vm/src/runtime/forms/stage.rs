@@ -11770,7 +11770,7 @@ fn dispatch_object_state_op(
         return true;
     }
 
-    if op == 191 || op == constants::elm_value::GET_OBJECT_DISP_ONOFF {
+    if op == 191 || op == constants::elm_value::SYSCOM_GET_OBJECT_DISP_ONOFF {
         ctx.stack.push(Value::Int(1));
         return true;
     }
@@ -12520,7 +12520,7 @@ fn dispatch_object_state_op(
                 "unsupported OBJECT op {} tail={:?} al_id={:?}",
                 op, tail, al_id
             );
-            if op == 191 || op == constants::elm_value::GET_OBJECT_DISP_ONOFF {
+            if op == 191 || op == constants::elm_value::SYSCOM_GET_OBJECT_DISP_ONOFF {
                 ctx.stack.push(Value::Int(1));
             } else {
                 push_ok(ctx, ret_form);
