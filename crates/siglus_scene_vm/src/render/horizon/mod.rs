@@ -271,7 +271,7 @@ impl Renderer {
                 height: 1,
                 center_x: 0,
                 center_y: 0,
-                rgba: vec![255; 4],
+                rgba: vec![0; 4],
             };
             // The first texture: gpu.c binds id 0 where none is given.
             self.white = Texture::from_image(&pixel, (0, 0));
@@ -293,56 +293,113 @@ impl Renderer {
             TexKey::External(_) => true,
         });
         self.prepare_emotes(frame);
-        // As on the desktop: only frames that sample the drawn scene go
-        // through the internal targets.
         let dump = self.dump.take();
-        let needs_scene_texture = dump.is_some()
-            || frame.wipe.is_some()
-            || frame
-                .sprites
-                .iter()
-                .any(|entry| matches!(entry.sprite.blend, SpriteBlend::Overlay));
-        if needs_scene_texture {
+        if let Some(path) = dump {
             let final_target = self.render_frame_to_targets(images, frame)?;
-            if let Some(path) = dump {
-                let target = &self.targets[final_target as usize];
-                let saved = match target.read() {
-                    Some(rgba) => image::save_buffer(
-                        &path,
+            let target = &self.targets[final_target as usize];
+            let saved = match target.read() {
+                Some(rgba) => image::save_buffer(
+                    &path,
+                    &rgba,
+                    target.width,
+                    target.height,
+                    image::ColorType::Rgba8,
+                )
+                .map_err(|err| err.to_string()),
+                None => Err("read failed".to_string()),
+            };
+            crate::switch_host::report_switch_diagnostic(&format!(
+                "siglus_switch: dump {} {saved:?} wipe={:?}\n",
+                path.display(),
+                frame.wipe.as_ref().map(|w| (
+                    w.wipe_type,
+                    w.progress,
+                    w.under.len(),
+                    w.current.len(),
+                    w.next.len(),
+                    w.over.len()
+                ))
+            ));
+            for (index, target) in self.targets.iter().enumerate() {
+                if let Some(rgba) = target.read() {
+                    let _ = image::save_buffer(
+                        path.with_extension(format!("t{index}.png")),
                         &rgba,
                         target.width,
                         target.height,
                         image::ColorType::Rgba8,
-                    )
-                    .map_err(|err| err.to_string()),
-                    None => Err("read failed".to_string()),
-                };
-                crate::switch_host::report_switch_diagnostic(&format!(
-                    "siglus_switch: dump {} {saved:?} wipe={:?}\n",
-                    path.display(),
-                    frame.wipe.as_ref().map(|w| (w.wipe_type, w.progress, w.under.len(), w.current.len(), w.next.len(), w.over.len()))
-                ));
-                for (index, target) in self.targets.iter().enumerate() {
-                    if let Some(rgba) = target.read() {
-                        let _ = image::save_buffer(
-                            path.with_extension(format!("t{index}.png")),
-                            &rgba,
-                            target.width,
-                            target.height,
-                            image::ColorType::Rgba8,
-                        );
-                    }
+                    );
                 }
             }
             let display = self.display_geom();
             gpu::begin_pass(None, Some([0.0, 0.0, 0.0, 1.0]), true);
             let source = self.targets[final_target as usize].id;
             self.copy(source, display);
+        } else if let Some(wipe) = frame.wipe.as_ref() {
+            self.render_wipe_to_display(images, wipe)?;
         } else {
             self.render_to_display(images, &frame.sprites)?;
         }
         self.end(true);
         Ok(())
+    }
+
+    fn render_wipe_to_display(
+        &mut self,
+        images: &ImageManager,
+        wipe: &WipeRenderPlan,
+    ) -> Result<()> {
+        let p = match wipe.wipe_type {
+            1 => 1.0,
+            2 => 0.0,
+            _ => wipe.progress.clamp(0.0, 1.0),
+        };
+        let mut combined = Vec::with_capacity(
+            wipe.under.len() + wipe.next.len() + wipe.current.len() + wipe.over.len(),
+        );
+        combined.extend(wipe.under.iter().cloned());
+        if p <= 0.001 {
+            combined.extend(wipe.next.iter().cloned());
+        } else if p >= 0.999 {
+            combined.extend(wipe.current.iter().cloned());
+        } else {
+            let common_prefix = wipe
+                .next
+                .iter()
+                .zip(wipe.current.iter())
+                .take_while(|(a, b)| {
+                    a.sprite.image_id == b.sprite.image_id
+                        && a.sprite.emote_render.is_none()
+                        && b.sprite.emote_render.is_none()
+                        && a.sprite.x == b.sprite.x
+                        && a.sprite.y == b.sprite.y
+                        && a.sprite.alpha == b.sprite.alpha
+                        && a.sprite.blend == b.sprite.blend
+                })
+                .count();
+            combined.extend(wipe.next[..common_prefix].iter().cloned());
+            let fade_old = common_prefix > 0 || !wipe.under.is_empty() || wipe.current.is_empty();
+            for mut entry in wipe.next[common_prefix..].iter().cloned() {
+                if fade_old {
+                    entry.sprite.alpha = ((entry.sprite.alpha as f32) * (1.0 - p))
+                        .round()
+                        .clamp(0.0, 255.0) as u8;
+                }
+                if entry.sprite.alpha > 0 {
+                    combined.push(entry);
+                }
+            }
+            for mut entry in wipe.current[common_prefix..].iter().cloned() {
+                entry.sprite.alpha = ((entry.sprite.alpha as f32) * p)
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+                if entry.sprite.alpha > 0 {
+                    combined.push(entry);
+                }
+            }
+        }
+        combined.extend(wipe.over.iter().cloned());
+        self.render_to_display(images, &combined)
     }
 
     fn display_geom(&self) -> Geom {
