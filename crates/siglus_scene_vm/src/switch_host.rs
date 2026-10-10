@@ -335,6 +335,28 @@ pub unsafe extern "C" fn siglus_switch_engine_create(
     width: u32,
     height: u32,
 ) -> *mut SwitchHost {
+    static PANIC_HOOK_SET: std::sync::Once = std::sync::Once::new();
+    PANIC_HOOK_SET.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            let location = info
+                .location()
+                .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()))
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let message = if let Some(s) = info.payload().downcast_ref::<&str>() {
+                (*s).to_string()
+            } else if let Some(s) = info.payload().downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "<non-string panic payload>".to_string()
+            };
+            let panic_str = format!("siglus_switch: PANIC at {location}: {message}\n");
+            eprintln!("{panic_str}");
+            if let Ok(c) = std::ffi::CString::new(panic_str.as_str()) {
+                unsafe { siglus_switch_log_message(c.as_ptr()) };
+            }
+        }));
+    });
+
     if project_dir.is_null() {
         return std::ptr::null_mut();
     }
@@ -405,11 +427,20 @@ pub unsafe extern "C" fn siglus_switch_engine_stick(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn siglus_switch_engine_destroy(host: *mut SwitchHost) {
+    report_switch_marker(b"siglus_switch: rust engine-destroy begin\n\0");
     if !host.is_null() {
         let mut host = unsafe { Box::from_raw(host) };
         let last = host.global_fingerprint;
         host.host.persist_global_if_changed(Some(last));
+        // Explicitly stop movie decoders and all audio tracks so background worker threads exit before unmount
+        let vm = host.host.vm_mut();
+        vm.ctx.movie.stop(&mut vm.ctx.audio);
+        let _ = vm.ctx.bgm.stop();
+        let _ = vm.ctx.se.stop_all(None);
+        let _ = vm.ctx.koe.stop(None);
+        let _ = vm.ctx.pcm.stop_all(None);
         drop(host);
     }
     crate::original_save::shutdown_save_writer();
+    report_switch_marker(b"siglus_switch: rust engine-destroy complete\n\0");
 }

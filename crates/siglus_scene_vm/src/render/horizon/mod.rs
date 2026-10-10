@@ -582,14 +582,18 @@ impl Renderer {
             return;
         }
         let aux = if matches!(cmd.pipeline_key.technique.special, TechniqueSpecial::Overlay) {
-            backdrop.map_or(-1, |t| self.targets[t as usize].id)
+            backdrop.map_or(-1, |t| self.targets.get(t as usize).map_or(-1, |tgt| tgt.id))
         } else {
             self.texture_of(&cmd.wipe_src_image_id)
         };
         let mut draw = GpuDraw::new(self.programs.sprite_v, self.programs.sprite_f);
         draw.layout(size_of::<VertexSprite2dData>() as u32, SPRITE_ATTRIBUTES);
-        let range = cmd.range.start as usize..cmd.range.end as usize;
-        draw.vertices(&self.sprite_verts[range]);
+        let start = (cmd.range.start as usize).min(self.sprite_verts.len());
+        let end = (cmd.range.end as usize).min(self.sprite_verts.len());
+        if start >= end {
+            return;
+        }
+        draw.vertices(&self.sprite_verts[start..end]);
         draw.textures[..5].copy_from_slice(&[
             base,
             self.texture_of(&cmd.mask_image_id),
@@ -644,8 +648,12 @@ impl Renderer {
         };
         let mut draw = GpuDraw::new(vertex, fragment);
         draw.layout(size_of::<Vertex>() as u32, MESH_ATTRIBUTES);
-        let range = cmd.range.start as usize..cmd.range.end as usize;
-        draw.vertices(&self.plan.verts[range]);
+        let start = (cmd.range.start as usize).min(self.plan.verts.len());
+        let end = (cmd.range.end as usize).min(self.plan.verts.len());
+        if start >= end {
+            return;
+        }
+        draw.vertices(&self.plan.verts[start..end]);
         let base = self
             .external_of(&cmd.mesh_texture_path)
             .map_or_else(|| self.texture_of(&cmd.image_id), |t| t.id);
@@ -750,10 +758,13 @@ impl Renderer {
         let mut draw = GpuDraw::new(self.programs.wipe_v, self.programs.wipe_f);
         draw.stride = 4;
         draw.vertices(&dummy);
+        let under_id = self.targets.get(under as usize).map_or(-1, |t| t.id);
+        let wipe_a_id = self.targets.get(Tgt::WipeA as usize).map_or(-1, |t| t.id);
+        let wipe_b_id = self.targets.get(Tgt::WipeB as usize).map_or(-1, |t| t.id);
         draw.textures[..4].copy_from_slice(&[
-            self.targets[under as usize].id,
-            self.targets[Tgt::WipeA as usize].id,
-            self.targets[Tgt::WipeB as usize].id,
+            under_id,
+            wipe_a_id,
+            wipe_b_id,
             mask,
         ]);
         draw.viewport = geom.viewport;

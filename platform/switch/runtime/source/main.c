@@ -304,6 +304,11 @@ int main(void) {
     mkdir("sdmc:/switch/siglus_rs", 0777);
     mkdir("sdmc:/switch/siglus_rs/savedata", 0777);
 
+    freopen("sdmc:/switch/siglus_rs/siglus_switch.log", "a", stderr);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    freopen("sdmc:/switch/siglus_rs/siglus_switch.log", "a", stdout);
+    setvbuf(stdout, NULL, _IONBF, 0);
+
     Result rc = romfsMountSelf("romfs");
     log_startup_result("romfsMountSelf", rc);
     if (R_FAILED(rc)) {
@@ -380,6 +385,7 @@ int main(void) {
         if (first_frame) siglus_switch_log_message("siglus_switch: first-frame step begin\n");
         const uint64_t t0 = armGetSystemTick();
         if (engine != NULL && siglus_switch_engine_step(engine, 16)) {
+            siglus_switch_log_message("siglus_switch: siglus_switch_engine_step returned true (exit requested)\n");
             break;
         }
         const uint64_t t1 = armGetSystemTick();
@@ -436,10 +442,15 @@ int main(void) {
         }
     }
 
+    siglus_switch_log_message("siglus_switch: left main loop, destroying engine\n");
     siglus_switch_engine_destroy(engine);
-
+    siglus_switch_log_message("siglus_switch: engine destroyed, stopping audio\n");
     exit_audio();
+    siglus_switch_log_message("siglus_switch: audio stopped, waiting for background threads\n");
+    svcSleepThread(200000000ULL);
+    siglus_switch_log_message("siglus_switch: exiting gpu and romfs\n");
     siglus_gpu_exit();
     romfsExit();
+    siglus_switch_log_message("siglus_switch: shutdown complete\n");
     return 0;
 }

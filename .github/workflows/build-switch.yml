@@ -27,6 +27,8 @@ jobs:
           mkdir -p dist/switch
           cp platform/switch/runtime/siglus_switch.nro dist/switch/siglus-switch.nro
           cp platform/switch/runtime/siglus_switch.nso dist/switch/main
+          cp platform/switch/runtime/siglus_switch.elf dist/switch/siglus-switch.elf
+          cp platform/switch/runtime/siglus_switch.map dist/switch/siglus-switch.map
 
       - name: Upload Switch artifacts
         uses: actions/upload-artifact@v4
@@ -35,4 +37,6 @@ jobs:
           path: |
             dist/switch/siglus-switch.nro
             dist/switch/main
+            dist/switch/siglus-switch.elf
+            dist/switch/siglus-switch.map
           if-no-files-found: error
