@@ -434,9 +434,9 @@ pub unsafe extern "C" fn siglus_switch_engine_destroy(host: *mut SwitchHost) {
         host.host.persist_global_if_changed(Some(last));
         // Explicitly stop movie decoders and all audio tracks so background worker threads exit before unmount
         let vm = host.host.vm_mut();
-        vm.ctx.movie.stop(&mut vm.ctx.audio);
+        vm.ctx.movie.stop();
         let _ = vm.ctx.bgm.stop();
-        let _ = vm.ctx.se.stop_all(None);
+        let _ = vm.ctx.se.stop(None);
         let _ = vm.ctx.koe.stop(None);
         let _ = vm.ctx.pcm.stop_all(None);
         drop(host);
