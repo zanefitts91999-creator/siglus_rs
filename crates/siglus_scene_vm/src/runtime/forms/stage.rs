@@ -11770,6 +11770,11 @@ fn dispatch_object_state_op(
         return true;
     }
 
+    if op == 191 || op == constants::elm_value::GET_OBJECT_DISP_ONOFF {
+        ctx.stack.push(Value::Int(1));
+        return true;
+    }
+
     let k = resolve_object_op(&ctx.ids, op);
     match k {
         ObjectOpKind::Init => {
@@ -12511,10 +12516,16 @@ fn dispatch_object_state_op(
             true
         }
         ObjectOpKind::Unknown => {
-            panic!(
+            log::warn!(
                 "unsupported OBJECT op {} tail={:?} al_id={:?}",
                 op, tail, al_id
             );
+            if op == 191 || op == constants::elm_value::GET_OBJECT_DISP_ONOFF {
+                ctx.stack.push(Value::Int(1));
+            } else {
+                push_ok(ctx, ret_form);
+            }
+            true
         }
         _ => false,
     }

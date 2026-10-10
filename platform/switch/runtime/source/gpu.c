@@ -431,14 +431,14 @@ int32_t siglus_gpu_texture_create(uint32_t width, uint32_t height, uint32_t mip_
     texture->render_target = (flags & SiglusGpuTexture_RenderTarget) != 0;
     if (!init_image(&texture->image, &texture->memory, &texture->memory_size, &texture->memory_flags,
                     width, height, mip_levels, DkImageFormat_RGBA8_Unorm,
-                    texture->render_target ? DkImageFlags_UsageRender | DkImageFlags_HwCompression : 0)) {
+                    texture->render_target ? DkImageFlags_UsageRender : 0)) {
         texture->used = false;
         return -1;
     }
     if (texture->render_target) {
         if (!init_image(&texture->depth, &texture->depth_memory, &texture->depth_memory_size, &texture->depth_memory_flags,
                         width, height, 1, DkImageFormat_Z24S8,
-                        DkImageFlags_UsageRender | DkImageFlags_HwCompression)) {
+                        DkImageFlags_UsageRender)) {
             defer(texture->memory, texture->memory_size, texture->memory_flags, -1);
             texture->memory = NULL;
             texture->used = false;

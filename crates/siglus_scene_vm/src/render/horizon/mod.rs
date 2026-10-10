@@ -271,7 +271,7 @@ impl Renderer {
                 height: 1,
                 center_x: 0,
                 center_y: 0,
-                rgba: vec![0; 4],
+                rgba: vec![255; 4],
             };
             // The first texture: gpu.c binds id 0 where none is given.
             self.white = Texture::from_image(&pixel, (0, 0));
