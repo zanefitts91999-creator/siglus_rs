@@ -271,7 +271,7 @@ impl Renderer {
                 height: 1,
                 center_x: 0,
                 center_y: 0,
-                rgba: vec![255; 4],
+                rgba: vec![0; 4],
             };
             // The first texture: gpu.c binds id 0 where none is given.
             self.white = Texture::from_image(&pixel, (0, 0));
@@ -511,6 +511,13 @@ impl Renderer {
             if texture.source == source {
                 return Some(texture.id);
             }
+            // gpu.c orders uploads with the draws, so a texture drawn
+            // earlier this frame can be rewritten in place.
+            if texture.width == image.width.max(1) && texture.height == image.height.max(1) {
+                texture.write(&image);
+                texture.source = source;
+                return Some(texture.id);
+            }
         }
         let texture = Texture::from_image(&image, source)?;
         let id = texture.id;
@@ -748,8 +755,11 @@ impl Renderer {
             return Ok(target);
         }
         let mask = match wipe.mask_image_id.as_ref() {
-            Some(id) => self.image_texture(images, id).unwrap_or(-1),
-            None => self.generated_wipe_mask(wipe),
+            Some(id) => self.image_texture(images, id).unwrap_or(0),
+            None => {
+                let m = self.generated_wipe_mask(wipe);
+                if m < 0 { 0 } else { m }
+            }
         };
         let uniform: WipeUniform = wipe_uniform(wipe, self.logical_w as f32, self.logical_h as f32);
         gpu::begin_pass(Some(&self.targets[target as usize]), Some([0.0, 0.0, 0.0, 1.0]), false);
@@ -758,9 +768,9 @@ impl Renderer {
         let mut draw = GpuDraw::new(self.programs.wipe_v, self.programs.wipe_f);
         draw.stride = 4;
         draw.vertices(&dummy);
-        let under_id = self.targets.get(under as usize).map_or(-1, |t| t.id);
-        let wipe_a_id = self.targets.get(Tgt::WipeA as usize).map_or(-1, |t| t.id);
-        let wipe_b_id = self.targets.get(Tgt::WipeB as usize).map_or(-1, |t| t.id);
+        let under_id = self.targets.get(under as usize).map_or(0, |t| t.id);
+        let wipe_a_id = self.targets.get(Tgt::WipeA as usize).map_or(0, |t| t.id);
+        let wipe_b_id = self.targets.get(Tgt::WipeB as usize).map_or(0, |t| t.id);
         draw.textures[..4].copy_from_slice(&[
             under_id,
             wipe_a_id,

@@ -500,7 +500,7 @@ void siglus_gpu_texture_upload(int32_t id, uint32_t level, const uint8_t* rgba, 
 }
 
 void siglus_gpu_texture_destroy(int32_t id) {
-    if (id < 0 || id >= MaxTextures || !textures[id].used) return;
+    if (id <= 0 || id >= MaxTextures || !textures[id].used) return;
     Texture* texture = &textures[id];
     defer(texture->memory, texture->memory_size, texture->memory_flags, -1);
     if (texture->render_target) {
