@@ -56,7 +56,9 @@ impl IntEvent {
 
     pub fn set_value(&mut self, v: i32) {
         self.value = v;
-        // Note: the original does not touch the event fields here.
+        if self.loop_type == -1 {
+            self.cur_value = v;
+        }
     }
 
     pub fn get_value(&self) -> i32 {
@@ -64,7 +66,11 @@ impl IntEvent {
     }
 
     pub fn get_total_value(&self) -> i32 {
-        self.cur_value
+        if self.loop_type == -1 {
+            self.value
+        } else {
+            self.cur_value
+        }
     }
 
     pub fn set_event(

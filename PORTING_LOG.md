@@ -31,12 +31,19 @@
 | **M6**<br>`65ab3a1` | **人名错位、立绘缺失与掉帧** | 1. 人名守卫 `is_empty` 拦截更新且清理不彻底；<br>2. 复合立绘 `patno`/`frame_index` 报错 `bail!` 且 `album_cut` 越界返回 None；<br>3. VM Tick 动画/天气全量空扫描 CPU 瓶颈 | 1. 移除人名守卫并全流程支持清空；<br>2. 移除组合立绘 `patno`/`frame_index` 阻断，`album_cut` 安全 fallback cut 0；<br>3. 增加活跃事件与天气对象极速早退路径 | ✅ **已成功部署至 Switch 实机**<br>双路径回读哈希 100% 匹配 |
 | **M7**<br>`b3df14a` | **存读档卡顿、翻页槽位丢失与主循环深优** | 1. 存读档与翻页密集查询未命中 SD 卡小文件引发大延迟；<br>2. `CHANGE_FILE` 遗漏更新 `thumb_save_no` 且缩略图为 None 时销毁 backend 导致槽位隐形；<br>3. Emote/Movie 每帧全量 stage 空迭代 | 1. 增加 `THUMB_IMAGE_CACHE` 内存缓存，存盘即时失效；<br>2. `CHANGE_FILE` 解析 `thumb_save_no`，空图绑定透明 fallback 保持有效 backend；<br>3. Emote/Movie 增加极速早退路径 | ✅ **云端构建成功，已下载本地**<br>SHA256: `6233DC46...44F2` |
 | **M8**<br>`ffd6dd5` | **Switch 原生级 60 FPS 深度性能重构** | 1. `GlobalState::tick_frame` 与 `tick_stage_form` 每帧触发 13+ 处 `Vec` 堆分配、排序与 HashMap 检索；<br>2. `ObjectPropEvents` 对 36 个 `IntEvent` 每帧全量函数调用与扫描；<br>3. 对话框文字静态停留时每帧全量遍历所有 `glyphs` 与 `message_pages` 重新计算计数；<br>4. `ImageManager::organize()` 与 GPU `textures.retain()` 每帧全量 Hash 表扫描；<br>5. `plan_sprites` 每帧冗余 `clone()` 图像句柄与路径 | 1. 彻底移除所有 13 处每帧 `Vec` 堆分配，采用原地零分配直接迭代；<br>2. `ObjectPropEvents` 引入活跃判定极速路径，静止对象完全跳过 36 个事件的更新；<br>3. 引入 `last_reveal_visible` 缓存，文字静止时完全跳过字形与分页循环；<br>4. 资源整理与纹理淘汰实行 60 帧周期限制；<br>5. 修正借用检查，保持安全零分配结构 | ✅ **已成功部署至 Switch 实机**<br>双路径回读哈希 100% 匹配<br>SHA256: `FC1948F3...DEEA` |
+| **M9**<br>`pending` | **彻底修复存档后立绘缺失与转场反向截断** | 1. `render_wipe_to_display` 转场逻辑中 `current` 与 `next` 场景流向彻底反向，转场到新场景时反向输出旧场景或透明截断；<br>2. `IntEvent::set_value` 在无活跃动画 (`loop_type == -1`) 时未同步 `cur_value`，导致 M8 早退机制下 `get_total_value()` 读取到旧的 `cur_value == 0`，角色透明度为 0 彻底隐形 | 1. 纠正 `render_wipe_to_display` 流向：`p <= 0.001` 出 `current`，`p >= 0.999` 出 `next`，渐变期正确淡入淡出；<br>2. `IntEvent::set_value` 同步 `cur_value = v`，`get_total_value` 在 `loop_type == -1` 时直接返回 `self.value` | 🔄 **源码已就绪，准备触发云端构建** |
 
 ---
 
 ## 🏷️ 三、实机当前与最新待部署版本实证校验 (Deployed vs Latest Build)
 
-### 1. Switch 实机当前在线版本 (M8 - 原生级 60 FPS 深度重构版)
+### 1. 最新构建版本 (M9 - 存档后立绘与转场双重修复，待云端构建)
+- **修复内容**：彻底纠正 Horizon 转场流向、同步 `IntEvent` 静态属性，消除存档后立绘缺失
+- **涉及文件**：
+  - [`crates/siglus_scene_vm/src/render/horizon/mod.rs`](file:///D:/ns/siglus_rs/crates/siglus_scene_vm/src/render/horizon/mod.rs)
+  - [`crates/siglus_scene_vm/src/runtime/int_event.rs`](file:///D:/ns/siglus_rs/crates/siglus_scene_vm/src/runtime/int_event.rs)
+
+### 2. Switch 实机当前在线版本 (M8 - 原生级 60 FPS 深度重构版)
 - **Git Commit**：`ffd6dd5` (`fix(switch): fix borrow conflict in plan_sprites`)
 - **GitHub Actions Run ID**：`38138288012` (Artifact ID: `11702097750`)
 - **文件体积**：`25,292,016` 字节 (24.12 MB)
@@ -49,7 +56,7 @@
   ```
 - **实机校验状态**：✅ **双路径回读 100% 匹配**
 
-### 2. 历史归档版本
+### 3. 历史归档版本
 - **M7 (`b3df14a`)**：`6233DC46262D8B2AEB7EBF82C8C1312697AEEBA7975EB8A27524793DF34144F2` (存读档缩略图缓存)
 - **M6 (`65ab3a1`)**：`78B210C7EA96152E411E8F7AFDEFBCC494E56CB8A59889487C1B40788E7D8413` (人名与立绘修复)
 

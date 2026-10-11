@@ -364,14 +364,14 @@ impl Renderer {
         );
         combined.extend(wipe.under.iter().cloned());
         if p <= 0.001 {
-            combined.extend(wipe.next.iter().cloned());
-        } else if p >= 0.999 {
             combined.extend(wipe.current.iter().cloned());
+        } else if p >= 0.999 {
+            combined.extend(wipe.next.iter().cloned());
         } else {
             let common_prefix = wipe
-                .next
+                .current
                 .iter()
-                .zip(wipe.current.iter())
+                .zip(wipe.next.iter())
                 .take_while(|(a, b)| {
                     a.sprite.image_id == b.sprite.image_id
                         && a.sprite.emote_render.is_none()
@@ -382,9 +382,9 @@ impl Renderer {
                         && a.sprite.blend == b.sprite.blend
                 })
                 .count();
-            combined.extend(wipe.next[..common_prefix].iter().cloned());
-            let fade_old = common_prefix > 0 || !wipe.under.is_empty() || wipe.current.is_empty();
-            for mut entry in wipe.next[common_prefix..].iter().cloned() {
+            combined.extend(wipe.current[..common_prefix].iter().cloned());
+            let fade_old = common_prefix > 0 || !wipe.under.is_empty() || wipe.next.is_empty();
+            for mut entry in wipe.current[common_prefix..].iter().cloned() {
                 if fade_old {
                     entry.sprite.alpha = ((entry.sprite.alpha as f32) * (1.0 - p))
                         .round()
@@ -394,7 +394,7 @@ impl Renderer {
                     combined.push(entry);
                 }
             }
-            for mut entry in wipe.current[common_prefix..].iter().cloned() {
+            for mut entry in wipe.next[common_prefix..].iter().cloned() {
                 entry.sprite.alpha = ((entry.sprite.alpha as f32) * p)
                     .round()
                     .clamp(0.0, 255.0) as u8;
