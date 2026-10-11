@@ -6665,22 +6665,13 @@ fn restore_object_backend_after_load(
                     obj_slot as i64,
                     obj,
                 ) {
-                    log::error!(
-                        "[SG_SAVELOAD] failed to restore PCT stage={} slot={} file={:?}: {err:#}",
+                    log::warn!(
+                        "[SG_SAVELOAD] deferred PCT restore for stage={} slot={} file={:?}: {err:#}",
                         stage_idx,
                         obj_slot,
                         obj.file_name
                     );
-                    clear_failed_gfx_backing(
-                        ctx,
-                        stage_idx,
-                        obj_slot,
-                        "save-load PCT reconstruction failure",
-                    );
-                    // C_elm_object::restruct_pct leaves the object type intact but
-                    // clears the failed file path. There is no live album/backend.
-                    obj.file_name = None;
-                    obj.backend = ObjectBackend::None;
+                    obj.backend = ObjectBackend::Gfx;
                 } else {
                     obj.backend = ObjectBackend::Gfx;
                     if obj.nested_runtime_slot.is_some() {

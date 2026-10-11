@@ -793,7 +793,8 @@ impl GfxRuntime {
             let dst = self.ensure_object_mut(stage_u, obj_u);
             dst.is_mesh = false;
             dst.file = Some(file);
-            dst.patno = src.base.patno;
+            let pe_patno = pe.patno.get_total_value() as i64;
+            dst.patno = if pe_patno != 0 { pe_patno } else { src.base.patno };
             dst.disp = src.base.disp != 0;
             dst.x = pe.x.get_total_value() as i64;
             dst.y = pe.y.get_total_value() as i64;

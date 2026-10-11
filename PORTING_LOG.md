@@ -315,4 +315,29 @@ powershell -ExecutionPolicy Bypass -File D:\ns\verify_current_hashes.ps1
   5. 在 `runtime/mod.rs` 中为色调曲线增加 `has_table()` 守卫；为 GAN 效果增加 `has_any_active_gan()` 检查，避免无 GAN 场景下 `HashMap` 分配与全量对象递归；
   6. 在 `build_siglus_object_render_list` 中，增加非 debug 模式直达 `selected_stage` 快速路径，消除每帧多键合并向量分配与排序。
 
+---
+
+## 📌 M12.1 阶段修复：CI 编译与读档差分立绘切片恢复深度加固 (M12 Build Fix & Save-Load Sprite Restoration Deep Fix)
+
+- **修改时间**：2026-10-11
+- **对应模块**：
+  - [`crates/siglus_scene_vm/src/runtime/gan.rs`](file:///D:/ns/siglus_rs/crates/siglus_scene_vm/src/runtime/gan.rs)
+  - [`crates/siglus_scene_vm/src/runtime/globals.rs`](file:///D:/ns/siglus_rs/crates/siglus_scene_vm/src/runtime/globals.rs)
+  - [`crates/siglus_scene_vm/src/runtime/graphics.rs`](file:///D:/ns/siglus_rs/crates/siglus_scene_vm/src/runtime/graphics.rs)
+  - [`crates/siglus_scene_vm/src/runtime/forms/stage.rs`](file:///D:/ns/siglus_rs/crates/siglus_scene_vm/src/runtime/forms/stage.rs)
+- **缺陷现象**：
+  1. GitHub Actions CI 构建失败：`GanState.data` 属于私有字段导致编译报错 E0616；`tick_stage_form_state` 在遍历 `&mut st.object_lists` 时调用 `st.object_slot_is_used` 导致借用检查器报错 E0502；
+  2. 读档后差分立绘丢失或切片错位：读档后立绘表情被强行重置为 `base.patno`（通常为 0），丢失了脚本动态通过 `OBJECT.PATNO` 设置在 `prop_events.patno` 中的实际表情切片；
+  3. 读档偶发性彻底抹杀立绘对象：`restore_object_backend_after_load` 在 PCT 恢复遇错时执行死刑逻辑，直接清空 `obj.file_name = None` 并将 `obj.backend = None`，导致自愈系统 `repair_missing_gfx_leaf_images` 彻底无法恢复。
+- **底层根因剖析**：
+  1. `GanState` 缺少 `pub fn has_data(&self) -> bool` 公开查询接口；`tick_stage_form_state` 未对 `StageFormState` 结构体进行字段级拆分借用（split borrow）；
+  2. 在 `graphics.rs:796` 的 `restore_gfx_object_from_globals` 中，所有其他动画属性均从 `pe` (`prop_events`) 获取，唯独 `patno` 误写为 `src.base.patno`；
+  3. 在 `stage.rs:6680` 中，读档失败保护机制过于激进，抹去了文件名和 Gfx 后端标记。
+- **具体修改方案**：
+  1. 在 `gan.rs` 为 `GanState` 增加 `#[inline(always)] pub fn has_data(&self) -> bool`，并在 `globals.rs:5686, 5691` 中替换对私有字段的直接访问；
+  2. 在 `globals.rs:7685` 中提前独立借出 `embedded_by_stage` 和 `slot_use_by_stage`，消灭 Rust 借用冲突；
+  3. 在 `graphics.rs:796` 中将 `dst.patno` 改为优先从 `pe.patno.get_total_value() as i64` 获取，回退到 `src.base.patno`；
+  4. 在 `stage.rs:6665` 中，读档 PCT 恢复遇到错误时仅记录 warn，保留 `obj.backend = ObjectBackend::Gfx` 与原文件名，确保后续每帧运行的自愈系统能自动重试并拉起立绘。
+
+
 

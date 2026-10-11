@@ -205,6 +205,11 @@ impl GanState {
         self.data.is_some() && self.anm_start && !self.anm_pause
     }
 
+    #[inline(always)]
+    pub fn has_data(&self) -> bool {
+        self.data.is_some()
+    }
+
     pub fn load_gan(&mut self, project_dir: &Path, append_dir: &str, name: &str) -> Result<()> {
         self.reset();
         self.load_gan_only(project_dir, append_dir, name)

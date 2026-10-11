@@ -5683,12 +5683,12 @@ impl ObjectState {
             || self.frame_action_ch.iter().any(|fa| fa.counter.is_running)
             || !self.runtime.child_objects.is_empty()
             || matches!(self.object_type, 6 | 7 | 9 | 12)
-            || self.gan.data.is_some()
+            || self.gan.has_data()
     }
 
     #[inline(always)]
     pub fn has_any_gan_recursive(&self) -> bool {
-        self.gan.data.is_some() || self.runtime.child_objects.iter().any(|c| c.has_any_gan_recursive())
+        self.gan.has_data() || self.runtime.child_objects.iter().any(|c| c.has_any_gan_recursive())
     }
 
     pub fn tick(&mut self, past_game_time: i32, past_real_time: i32) {
@@ -7682,16 +7682,23 @@ impl GlobalState {
         past_real_time: i32,
         wipe_active: bool,
     ) {
+        let embedded_by_stage = &st.embedded_object_slots_by_stage;
+        let slot_use_by_stage = &st.object_slot_use;
         for (&object_stage_id, objs) in &mut st.object_lists {
             if object_stage_id == 2 && !wipe_active {
                 continue;
             }
-            let embedded_slots = st.embedded_object_slots_by_stage.get(&object_stage_id);
+            let embedded_slots = embedded_by_stage.get(&object_stage_id);
+            let slot_uses = slot_use_by_stage.get(&object_stage_id);
             for (obj_idx, obj) in objs.iter_mut().enumerate() {
                 if embedded_slots.is_some_and(|slots| slots.contains(&obj_idx)) {
                     continue;
                 }
-                if !st.object_slot_is_used(object_stage_id, obj_idx) && !obj.used {
+                let slot_is_used = slot_uses
+                    .and_then(|flags| flags.get(obj_idx))
+                    .copied()
+                    .unwrap_or(true);
+                if !slot_is_used && !obj.used {
                     continue;
                 }
                 if !obj.needs_tick() {
