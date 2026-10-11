@@ -345,6 +345,11 @@ powershell -ExecutionPolicy Bypass -File D:\ns\verify_current_hashes.ps1
   - **二进制规格**：25,304,304 字节
   - **权威 SHA-256**：`F4E654F5CA5DB74920D46A57EA04E126B021705AA3EADF1E66D0F74625D84B4A`
   - **本地就绪文件**：[`D:\ns\v13_build\siglus-switch.nro`](file:///D:/ns/v13_build/siglus-switch.nro) 与 [`D:\ns\siglus-switch.nro`](file:///D:/ns/siglus-switch.nro)
+- **Switch MTP 实机部署与双路径回读哈希校验**：
+  - **部署时间**：2026-10-12 00:08
+  - **路径 1 (`switch/siglus-switch.nro`)**：回读哈希 `F4E654F5CA5DB74920D46A57EA04E126B021705AA3EADF1E66D0F74625D84B4A` (100% 一致)
+  - **路径 2 (`switch/siglus_rs/siglus-switch.nro`)**：回读哈希 `F4E654F5CA5DB74920D46A57EA04E126B021705AA3EADF1E66D0F74625D84B4A` (100% 一致)
+  - **实机部署结论**：已完成双路径原子写入与全量校验，实机测试环境就绪。
 
 
 
