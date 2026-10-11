@@ -5658,6 +5658,39 @@ impl ObjectState {
         .any(|id| id != 0 && op == id)
     }
 
+    #[inline]
+    pub fn has_any_frame_action_recursive(&self) -> bool {
+        if !self.frame_action.cmd_name.is_empty() {
+            return true;
+        }
+        for ch in &self.frame_action_ch {
+            if !ch.cmd_name.is_empty() {
+                return true;
+            }
+        }
+        for child in &self.runtime.child_objects {
+            if child.has_any_frame_action_recursive() {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[inline(always)]
+    pub fn needs_tick(&self) -> bool {
+        self.any_event_active()
+            || self.frame_action.counter.is_running
+            || self.frame_action_ch.iter().any(|fa| fa.counter.is_running)
+            || !self.runtime.child_objects.is_empty()
+            || matches!(self.object_type, 6 | 7 | 9 | 12)
+            || self.gan.data.is_some()
+    }
+
+    #[inline(always)]
+    pub fn has_any_gan_recursive(&self) -> bool {
+        self.gan.data.is_some() || self.runtime.child_objects.iter().any(|c| c.has_any_gan_recursive())
+    }
+
     pub fn tick(&mut self, past_game_time: i32, past_real_time: i32) {
         let delta = past_game_time.max(0);
         if self.any_event_active() {
@@ -7658,6 +7691,12 @@ impl GlobalState {
                 if embedded_slots.is_some_and(|slots| slots.contains(&obj_idx)) {
                     continue;
                 }
+                if !st.object_slot_is_used(object_stage_id, obj_idx) && !obj.used {
+                    continue;
+                }
+                if !obj.needs_tick() {
+                    continue;
+                }
                 obj.tick(past_game_time, past_real_time);
             }
         }
@@ -7668,13 +7707,19 @@ impl GlobalState {
             }
             for mwnd in mwnds {
                 for obj in &mut mwnd.button_list {
-                    obj.tick(past_game_time, past_real_time);
+                    if obj.needs_tick() {
+                        obj.tick(past_game_time, past_real_time);
+                    }
                 }
                 for obj in &mut mwnd.face_list {
-                    obj.tick(past_game_time, past_real_time);
+                    if obj.needs_tick() {
+                        obj.tick(past_game_time, past_real_time);
+                    }
                 }
                 for obj in &mut mwnd.object_list {
-                    obj.tick(past_game_time, past_real_time);
+                    if obj.needs_tick() {
+                        obj.tick(past_game_time, past_real_time);
+                    }
                 }
             }
         }

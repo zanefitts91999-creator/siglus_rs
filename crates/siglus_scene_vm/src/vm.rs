@@ -2913,6 +2913,9 @@ impl<'a> SceneVm<'a> {
             }
         }
         for (child_idx, child) in obj.runtime.child_objects.iter().enumerate() {
+            if !child.has_any_frame_action_recursive() {
+                continue;
+            }
             // CHILD object lists are initialized with use_ini=false in C++;
             // every allocated child slot therefore has use_flag=true even when
             // its current type is NONE.  Recurse over the list itself instead
@@ -3675,60 +3678,64 @@ impl<'a> SceneVm<'a> {
         }
 
         let mut work: Vec<FrameActionWork> = Vec::new();
-        let mut global_form_ids: Vec<u32> =
-            self.ctx.globals.frame_actions.keys().copied().collect();
-        global_form_ids.sort_unstable();
-        for form_id in global_form_ids {
-            let Some(fa) = self.ctx.globals.frame_actions.get(&form_id) else {
-                continue;
-            };
-            if !fa.cmd_name.is_empty() {
-                work.push(FrameActionWork {
-                    stage_idx: -1,
-                    obj_idx: usize::MAX,
-                    ch_idx: None,
-                    global_form_id: Some(form_id),
-                    object_chain: None,
-                    frame_action_chain: Some(vec![form_id as i32]),
-                    scn_name: fa.scn_name.clone(),
-                    cmd_name: fa.cmd_name.clone(),
-                    args: fa.args.clone(),
-                    count: fa.counter.get_count(),
-                    end_time: fa.end_time,
-                });
-            }
-        }
-        let mut global_list_form_ids: Vec<u32> = self
-            .ctx
-            .globals
-            .frame_action_lists
-            .keys()
-            .copied()
-            .collect();
-        global_list_form_ids.sort_unstable();
-        for form_id in global_list_form_ids {
-            let Some(list) = self.ctx.globals.frame_action_lists.get(&form_id) else {
-                continue;
-            };
-            for (idx, fa) in list.iter().enumerate() {
+        if !self.ctx.globals.frame_actions.is_empty() {
+            let mut global_form_ids: Vec<u32> =
+                self.ctx.globals.frame_actions.keys().copied().collect();
+            global_form_ids.sort_unstable();
+            for form_id in global_form_ids {
+                let Some(fa) = self.ctx.globals.frame_actions.get(&form_id) else {
+                    continue;
+                };
                 if !fa.cmd_name.is_empty() {
                     work.push(FrameActionWork {
                         stage_idx: -1,
                         obj_idx: usize::MAX,
-                        ch_idx: Some(idx),
+                        ch_idx: None,
                         global_form_id: Some(form_id),
                         object_chain: None,
-                        frame_action_chain: Some(vec![
-                            form_id as i32,
-                            crate::runtime::forms::codes::ELM_ARRAY,
-                            idx as i32,
-                        ]),
+                        frame_action_chain: Some(vec![form_id as i32]),
                         scn_name: fa.scn_name.clone(),
                         cmd_name: fa.cmd_name.clone(),
                         args: fa.args.clone(),
                         count: fa.counter.get_count(),
                         end_time: fa.end_time,
                     });
+                }
+            }
+        }
+        if !self.ctx.globals.frame_action_lists.is_empty() {
+            let mut global_list_form_ids: Vec<u32> = self
+                .ctx
+                .globals
+                .frame_action_lists
+                .keys()
+                .copied()
+                .collect();
+            global_list_form_ids.sort_unstable();
+            for form_id in global_list_form_ids {
+                let Some(list) = self.ctx.globals.frame_action_lists.get(&form_id) else {
+                    continue;
+                };
+                for (idx, fa) in list.iter().enumerate() {
+                    if !fa.cmd_name.is_empty() {
+                        work.push(FrameActionWork {
+                            stage_idx: -1,
+                            obj_idx: usize::MAX,
+                            ch_idx: Some(idx),
+                            global_form_id: Some(form_id),
+                            object_chain: None,
+                            frame_action_chain: Some(vec![
+                                form_id as i32,
+                                crate::runtime::forms::codes::ELM_ARRAY,
+                                idx as i32,
+                            ]),
+                            scn_name: fa.scn_name.clone(),
+                            cmd_name: fa.cmd_name.clone(),
+                            args: fa.args.clone(),
+                            count: fa.counter.get_count(),
+                            end_time: fa.end_time,
+                        });
+                    }
                 }
             }
         }
@@ -3748,6 +3755,9 @@ impl<'a> SceneVm<'a> {
                     if st.is_embedded_object_slot(stage_idx, obj_idx)
                         || !st.object_slot_is_used(stage_idx, obj_idx)
                     {
+                        continue;
+                    }
+                    if !obj.has_any_frame_action_recursive() {
                         continue;
                     }
                     let mut object_chain = vec![
@@ -3776,6 +3786,9 @@ impl<'a> SceneVm<'a> {
                 };
                 for (mwnd_idx, mwnd) in mwnds.iter().enumerate() {
                     for (obj_idx, obj) in mwnd.button_list.iter().enumerate() {
+                        if !obj.has_any_frame_action_recursive() {
+                            continue;
+                        }
                         let mut object_chain = vec![
                             form_id as i32,
                             self.ctx.ids.elm_array,
@@ -3796,6 +3809,9 @@ impl<'a> SceneVm<'a> {
                         );
                     }
                     for (obj_idx, obj) in mwnd.face_list.iter().enumerate() {
+                        if !obj.has_any_frame_action_recursive() {
+                            continue;
+                        }
                         let mut object_chain = vec![
                             form_id as i32,
                             self.ctx.ids.elm_array,
@@ -3816,6 +3832,9 @@ impl<'a> SceneVm<'a> {
                         );
                     }
                     for (obj_idx, obj) in mwnd.object_list.iter().enumerate() {
+                        if !obj.has_any_frame_action_recursive() {
+                            continue;
+                        }
                         let mut object_chain = vec![
                             form_id as i32,
                             self.ctx.ids.elm_array,

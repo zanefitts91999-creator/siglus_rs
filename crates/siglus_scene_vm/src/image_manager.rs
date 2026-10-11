@@ -616,16 +616,21 @@ impl ImageManager {
                 .read()
                 .expect("image album lock poisoned")
                 .len();
+            if count == 0 {
+                bail!("g00 album has no frames: {name}");
+            }
+            let safe_cut = if cut < count { cut } else { 0 };
             if cut >= count {
-                bail!(
-                    "g00 frame index out of range: resource={} index={} count={}",
+                log::warn!(
+                    "g00 frame index out of range: resource={} index={} count={}, fallback to cut {}",
                     name,
                     cut,
-                    count
+                    count,
+                    safe_cut
                 );
             }
             self.keep_recent_album(&album);
-            return Ok(ImageHandle::new(album, cut));
+            return Ok(ImageHandle::new(album, safe_cut));
         }
 
         let (path, _ty) = crate::resource::find_g00_image_with_append_dir(
@@ -827,15 +832,20 @@ impl ImageManager {
                 .read()
                 .expect("image album lock poisoned")
                 .len();
+            if count == 0 {
+                bail!("g00 album has no frames: {:?}", resolved);
+            }
+            let safe_cut = if frame_index < count { frame_index } else { 0 };
             if frame_index >= count {
-                bail!(
-                    "g00 frame index out of range: {:?} index={} count={}",
+                log::warn!(
+                    "g00 frame index out of range: {:?} index={} count={}, fallback to cut {}",
                     resolved,
                     frame_index,
-                    count
+                    count,
+                    safe_cut
                 );
             }
-            return Ok(ImageHandle::new(album, frame_index));
+            return Ok(ImageHandle::new(album, safe_cut));
         }
 
         let img = load_image_any(&resolved, frame_index)

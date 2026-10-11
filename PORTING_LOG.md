@@ -33,6 +33,8 @@
 | **M8**<br>`ffd6dd5` | **Switch 原生级 60 FPS 深度性能重构** | 1. `GlobalState::tick_frame` 与 `tick_stage_form` 每帧触发 13+ 处 `Vec` 堆分配、排序与 HashMap 检索；<br>2. `ObjectPropEvents` 对 36 个 `IntEvent` 每帧全量函数调用与扫描；<br>3. 对话框文字静态停留时每帧全量遍历所有 `glyphs` 与 `message_pages` 重新计算计数；<br>4. `ImageManager::organize()` 与 GPU `textures.retain()` 每帧全量 Hash 表扫描；<br>5. `plan_sprites` 每帧冗余 `clone()` 图像句柄与路径 | 1. 彻底移除所有 13 处每帧 `Vec` 堆分配，采用原地零分配直接迭代；<br>2. `ObjectPropEvents` 引入活跃判定极速路径，静止对象完全跳过 36 个事件的更新；<br>3. 引入 `last_reveal_visible` 缓存，文字静止时完全跳过字形与分页循环；<br>4. 资源整理与纹理淘汰实行 60 帧周期限制；<br>5. 修正借用检查，保持安全零分配结构 | ✅ **已成功部署至 Switch 实机**<br>双路径回读哈希 100% 匹配<br>SHA256: `FC1948F3...DEEA` |
 | **M9**<br>`694daec` | **存档后立绘与属性脱节修复 (初版)** | `IntEvent::set_value` 在无活跃动画 (`loop_type == -1`) 时未同步 `cur_value`，导致 M8 早退机制下 `get_total_value()` 读取到旧的 `cur_value == 0`，角色透明度为 0 彻底隐形 | `IntEvent::set_value` 同步 `cur_value = v`，`get_total_value` 在 `loop_type == -1` 时直接返回 `self.value` | ✅ 源码已合入 |
 | **M10**<br>`cb35f4c` | **彻底纠正转场场景流向 (NEXT=旧, CURRENT=新) 与立绘完美交叉淡入淡出** | 1. 深度复查确认 Siglus 架构中 `TNM_STAGE_FRONT` (Stage 1) 为新画面 (`current`)，`TNM_STAGE_NEXT` (Stage 2) 为转场前保存的旧画面 (`next`)；此前因英文语义误解一度调转；<br>2. 转场期间旧立绘未按 `(1-p)` 衰减导致旧画面人物无法渐变消失 | 1. 修正流向：$p \le 0.001$ 出 `wipe.next`（旧场景），$p \ge 0.999$ 出 `wipe.current`（新场景），结束瞬间与游戏主场景无缝咬合；<br>2. 转场中间态：旧底图保持不透明避免暗闪，旧角色立绘按 $(1-p)$ 平滑淡出，新角色立绘按 $p$ 平滑淡入 | ✅ **云端构建成功，已下载本地就绪**<br>SHA256: `48A50E62...EBCA` |
+| **M11**<br>`0a932ac` | **存读档槽位隐形与缩略图失效** | 1. `CHANGE_FILE` 缩略图号解析脆弱；<br>2. 空缩略图缺少 Fallback 后端使槽位隐形；<br>3. 存档文件变动未清除内存缩略图缓存 | 1. 接入通用解析器 `parse_thumb_number`；<br>2. 空图绑定透明 Fallback 后端保护槽位；<br>3. 磁盘变动前强制清除内存缩略图缓存 | ✅ **云端构建成功，本地已下载**<br>SHA256: `675A1C02...1E59` |
+| **M12**<br>`待提交` | **原生 60 FPS 二次深度调优 & G00 越界容错复合立绘修复** | 1. G00 切片越界 `bail!` 导致重建失败抹除立绘 backend；<br>2. `repair_missing_gfx_leaf_images` 遗漏复合立绘导致立绘无法自愈；<br>3. `tick_frame` 每帧全量无条件堆分配 `object_chain`；<br>4. `tick_stage_form_state` 每帧空扫描无用槽位；<br>5. 色调曲线与 GAN 效果每帧全量空扫描与 HashMap 分配；<br>6. 渲染树构建每帧分配/排序非目标 stage 键集合 | 1. G00 切片越界改为安全回退至 cut 0，彻底根除立绘消失；<br>2. 修复复合立绘修复路径，支持 `load_g00_composed`；<br>3. `has_any_frame_action_recursive` 早退跳过堆分配；<br>4. `needs_tick` 与未使用槽位快速过滤；<br>5. 色调曲线与 GAN 效果活跃守卫早退；<br>6. 渲染树非 debug 模式直达目标 stage | 🚀 **待提交并触发构建** |
 
 ---
 
@@ -280,4 +282,37 @@ powershell -ExecutionPolicy Bypass -File D:\ns\verify_current_hashes.ps1
   1. 在 `stage.rs` 引入通用解析器 `parse_thumb_number`，并在 `CHANGE_FILE` 中全面替代硬编码数字解析；
   2. 在 `OBJECT_CREATE_SAVE_THUMB`、`OBJECT_CREATE_CAPTURE_THUMB` 及 `restore_object_backend_after_load` 中，对空图槽位绑定透明 fallback backend (`ctx.images.solid_rgba((0, 0, 0, 0))`)；
   3. 在 `syscom.rs` 的 `copy_slot`、`change_slot`、`delete_slot` 成功返回前均触发 `super::stage::clear_thumb_image_cache()` 强制失效缓存。
+
+---
+
+## 📌 M12 阶段修复与深优：Switch 原生级 60 FPS 二次深度调优 & G00 越界容错复合立绘修复 (Native 60 FPS Deep Performance Tuning & G00 Out-of-Bound Sprite Resilience)
+
+- **修改时间**：2026-10-11
+- **对应模块**：
+  - [`crates/siglus_scene_vm/src/image_manager.rs`](file:///D:/ns/siglus_rs/crates/siglus_scene_vm/src/image_manager.rs)
+  - [`crates/siglus_scene_vm/src/runtime/globals.rs`](file:///D:/ns/siglus_rs/crates/siglus_scene_vm/src/runtime/globals.rs)
+  - [`crates/siglus_scene_vm/src/runtime/mod.rs`](file:///D:/ns/siglus_rs/crates/siglus_scene_vm/src/runtime/mod.rs)
+  - [`crates/siglus_scene_vm/src/vm.rs`](file:///D:/ns/siglus_rs/crates/siglus_scene_vm/src/vm.rs)
+- **缺陷现象**：
+  1. 存档或切换场景后复合立绘偶发缺失：G00 切片超出帧数时返回 `bail!` 报错，导致 `restore_object_backend_after_load` 判定恢复失败，清空 `file_name` 并将 `backend` 重置为 `None`，导致立绘彻底消失；
+  2. 显存回收与自愈修复失效：`repair_missing_gfx_leaf_images` 未处理复合立绘（包含 `|` 描述符），尝试作为普通文件加载失败并加入永久黑名单；
+  3. CPU 性能瓶颈 1：`vm.rs` 的 `tick_frame` 每帧全量无条件为每个对象（包括无动作对象）分配 `Vec<i32>` 堆内存 `object_chain`；
+  4. CPU 性能瓶颈 2：`globals.rs` 的 `tick_stage_form_state` 每帧无差别遍历所有空槽位和静止对象，进行无效 `obj.tick()` 计算；
+  5. CPU 性能瓶颈 3：`runtime/mod.rs` 的 `apply_object_tonecurves` 与 `apply_gan_effects` 每帧全量扫描所有 Stage Forms，且 `apply_gan_effects` 频繁分配与填充 `HashMap`；
+  6. CPU 性能瓶颈 4：`build_siglus_object_render_list` 每帧对每个 Stage Form 分配、排序与去重 7 个列表的键集合，扫描统计非目标 stage 的各种对象数量，随后全部被丢弃。
+- **底层根因剖析**：
+  1. 原版 Siglus `C_d3d_album::get_texture` 对越界切片具备安全容错机制，而移植版硬编码 `bail!` 导致重建中断抹除 backend；
+  2. `repair_missing_gfx_leaf_images` 未分流 `load_g00_composed`；
+  3. `tick_frame` 收集 `FrameActionWork` 缺乏前置活跃检查；
+  4. `tick_stage_form_state` 缺乏未使用槽位和 `needs_tick` 早退路径；
+  5. 色调曲线与 GAN 效果缺乏全局活跃标记，`apply_gan_effects` 过早无条件分配 `HashMap`；
+  6. 渲染树构建缺乏直接定位 `selected_stage` 的快速路径。
+- **具体修改方案**：
+  1. 在 `image_manager.rs` 的 `load_g00` 与 `load_file` 中，将越界切片由 `bail!` 改为警告并安全回退至 cut 0，彻底保护对象 backend 不被置空；
+  2. 在 `runtime/mod.rs:repair_missing_gfx_leaf_images` 中，增加 `if file.contains('|') { self.images.load_g00_composed(&file) }` 路径；
+  3. 在 `ObjectState` 实现 `has_any_frame_action_recursive(&self) -> bool`，在 `vm.rs` 中跳过无动作对象，消灭每帧数百次 `object_chain` 堆分配；
+  4. 在 `ObjectState` 实现 `needs_tick(&self) -> bool`，在 `tick_stage_form_state` 中快速跳过未分配槽位与静止对象；
+  5. 在 `runtime/mod.rs` 中为色调曲线增加 `has_table()` 守卫；为 GAN 效果增加 `has_any_active_gan()` 检查，避免无 GAN 场景下 `HashMap` 分配与全量对象递归；
+  6. 在 `build_siglus_object_render_list` 中，增加非 debug 模式直达 `selected_stage` 快速路径，消除每帧多键合并向量分配与排序。
+
 

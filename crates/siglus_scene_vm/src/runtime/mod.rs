@@ -5048,6 +5048,9 @@ impl CommandContext {
     }
 
     fn apply_object_tonecurves(&mut self) {
+        if !self.tonecurve.has_table() || self.ids.obj_tonecurve_no == 0 {
+            return;
+        }
         let ids = self.ids.clone();
         let gfx = &mut self.gfx;
         let images = &mut self.images;
@@ -5081,7 +5084,31 @@ impl CommandContext {
         }
     }
 
+    fn has_any_active_gan(&self) -> bool {
+        for st in self.globals.stage_forms.values() {
+            for objs in st.object_lists.values() {
+                if objs.iter().any(|o| o.has_any_gan_recursive()) {
+                    return true;
+                }
+            }
+            for mwnds in st.mwnd_lists.values() {
+                for mwnd in mwnds {
+                    if mwnd.button_list.iter().any(|o| o.has_any_gan_recursive())
+                        || mwnd.face_list.iter().any(|o| o.has_any_gan_recursive())
+                        || mwnd.object_list.iter().any(|o| o.has_any_gan_recursive())
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     fn apply_gan_effects(&mut self, sprites: &mut Vec<RenderSprite>) {
+        if sprites.is_empty() || !self.has_any_active_gan() {
+            return;
+        }
         let mut index: HashMap<(Option<LayerId>, Option<SpriteId>), usize> = HashMap::default();
         for (i, s) in sprites.iter().enumerate() {
             index.insert((s.layer_id, s.sprite_id), i);
@@ -8340,9 +8367,13 @@ impl CommandContext {
                 continue;
             }
 
-            let img_id = match self.images.load_g00(&file, patno) {
-                Ok(id) => Ok(id),
-                Err(_) => self.images.load_bg_frame(&file, patno as usize),
+            let img_id = if file.contains('|') {
+                self.images.load_g00_composed(&file)
+            } else {
+                match self.images.load_g00(&file, patno) {
+                    Ok(id) => Ok(id),
+                    Err(_) => self.images.load_bg_frame(&file, patno as usize),
+                }
             };
             match img_id {
                 Ok(img_id) => {
@@ -15127,6 +15158,72 @@ fn build_siglus_object_render_list(
         };
         if debug_enabled {
             debug.push(format!("[SG_DEBUG] stage_form {}", form_id));
+        }
+        if !debug_enabled && !config_button_trace_enabled() {
+            let stage_idx = selected_stage;
+            let worlds = st.world_lists.get(&stage_idx);
+            if let Some(list) = st.object_lists.get(&stage_idx) {
+                let stage_parent_order = if is_excall_stage_form(ctx, form_id) {
+                    configured_excall_order(ctx)
+                } else {
+                    0
+                };
+                for (obj_idx, obj) in list.iter().enumerate() {
+                    if st.is_embedded_object_slot(stage_idx, obj_idx)
+                        || !st.object_slot_is_used(stage_idx, obj_idx)
+                        || !object_participates_in_tree(obj)
+                    {
+                        continue;
+                    }
+                    let info = effective_object_info(ctx, stage_idx, obj_idx, obj);
+                    let top_order = stage_parent_order.saturating_add(info.order);
+                    let top_layer = info.layer;
+                    render_nodes.extend(collect_object_render_nodes(
+                        ctx,
+                        form_id,
+                        worlds,
+                        stage_idx,
+                        obj_idx,
+                        obj,
+                        Some(info),
+                        true,
+                        stage_parent_order,
+                        0,
+                        None,
+                        top_order,
+                        top_layer,
+                        object_keys,
+                        &mut debug,
+                    ));
+                }
+            }
+            if let Some(mwnds) = st.mwnd_lists.get(&stage_idx) {
+                for m in mwnds {
+                    append_mwnd_embedded_groups(
+                        ctx,
+                        form_id,
+                        worlds,
+                        stage_idx,
+                        m,
+                        &mut render_nodes,
+                        object_keys,
+                        &mut debug,
+                    );
+                }
+            }
+            if let Some(items) = st.btnselitem_lists.get(&stage_idx) {
+                append_btnselitem_groups(
+                    ctx,
+                    form_id,
+                    worlds,
+                    stage_idx,
+                    items,
+                    &mut render_nodes,
+                    object_keys,
+                    &mut debug,
+                );
+            }
+            continue;
         }
         let mut stage_ids: Vec<i64> = st
             .object_lists
