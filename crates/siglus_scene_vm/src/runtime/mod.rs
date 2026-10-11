@@ -7757,6 +7757,15 @@ impl CommandContext {
     }
 
     fn sync_emote_objects(&mut self) {
+        let has_emote = self.globals.stage_forms.values().any(|st| {
+            st.object_lists.values().any(|objs| {
+                objs.iter().any(|obj| obj.object_type == 12 || obj.runtime.child_objects.iter().any(|c| c.object_type == 12))
+            })
+        });
+        if !has_emote {
+            return;
+        }
+
         let koe_playing = self.koe.is_playing_any();
         let live_mouth = if koe_playing {
             self.koe.current_mouth_volume()
@@ -7843,6 +7852,15 @@ impl CommandContext {
     }
 
     fn sync_movie_objects(&mut self) {
+        let has_movie = self.globals.stage_forms.values().any(|st| {
+            st.object_lists.values().any(|objs| {
+                objs.iter().any(|obj| obj.object_type == 9 || obj.runtime.child_objects.iter().any(|c| c.object_type == 9))
+            })
+        });
+        if !has_movie {
+            return;
+        }
+
         let wipe_active = self.globals.wipe.is_some();
         let (globals, layers, movie_mgr, audio, gfx, images, ids) = (
             &mut self.globals,

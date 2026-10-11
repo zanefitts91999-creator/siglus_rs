@@ -728,6 +728,7 @@ pub fn menu_save_slot(ctx: &mut CommandContext, quick: bool, idx: usize) {
     } else {
         RuntimeSaveKind::Normal
     };
+    super::stage::clear_thumb_image_cache();
     ctx.request_runtime_save(kind, idx);
 }
 

@@ -288,16 +288,43 @@ enum StageTarget {
     },
 }
 
+static THUMB_IMAGE_CACHE: std::sync::Mutex<Option<std::collections::HashMap<i64, Option<ImageHandle>>>> =
+    std::sync::Mutex::new(None);
+
+pub fn clear_thumb_image_cache() {
+    if let Ok(mut guard) = THUMB_IMAGE_CACHE.lock() {
+        if let Some(map) = guard.as_mut() {
+            map.clear();
+        }
+    }
+}
+
 fn load_thumb_image_id(ctx: &mut CommandContext, idx: i64) -> Option<ImageHandle> {
+    if let Ok(guard) = THUMB_IMAGE_CACHE.lock() {
+        if let Some(map) = guard.as_ref() {
+            if let Some(cached) = map.get(&idx) {
+                return cached.clone();
+            }
+        }
+    }
+
     let dir = crate::original_save::save_dir(&ctx.project_dir);
+    let mut result = None;
     for path in super::syscom::thumb_candidate_paths(&dir, idx) {
         if let Some(path) = crate::resource::resolve_game_file(&path).ok().flatten()
             && let Ok(img_id) = ctx.images.load_file(&path, 0)
         {
-            return Some(img_id);
+            result = Some(img_id);
+            break;
         }
     }
-    None
+
+    if let Ok(mut guard) = THUMB_IMAGE_CACHE.lock() {
+        let map = guard.get_or_insert_with(std::collections::HashMap::new);
+        map.insert(idx, result.clone());
+    }
+
+    result
 }
 
 fn insert_capture_image_id(
@@ -4857,12 +4884,8 @@ fn rebuild_object_after_change_file(
             if let Some(image_id) = load_thumb_image_id(ctx, obj.thumb_save_no) {
                 bind_capture_backend(ctx, obj, stage_idx, image_id);
             } else {
-                log::error!(
-                    "OBJECT.CHANGE_FILE SAVE_THUMB restructure failed: stage={} slot={} save_no={}",
-                    stage_idx,
-                    obj_idx,
-                    obj.thumb_save_no
-                );
+                let fallback = ctx.images.solid_rgba((0, 0, 0, 0));
+                bind_capture_backend(ctx, obj, stage_idx, fallback);
             }
         }
         9 => {
@@ -4904,12 +4927,8 @@ fn rebuild_object_after_change_file(
             if let Some(image_id) = load_thumb_image_id(ctx, obj.thumb_save_no) {
                 bind_capture_backend(ctx, obj, stage_idx, image_id);
             } else {
-                log::error!(
-                    "OBJECT.CHANGE_FILE THUMB restructure failed: stage={} slot={} thumb_no={}",
-                    stage_idx,
-                    obj_idx,
-                    obj.thumb_save_no
-                );
+                let fallback = ctx.images.solid_rgba((0, 0, 0, 0));
+                bind_capture_backend(ctx, obj, stage_idx, fallback);
             }
         }
         12 => {
@@ -9294,6 +9313,20 @@ fn dispatch_object_state_op(
         // Do not special-case PCT or infer behavior from the currently bound backend.
         object_free_type_self_like_cpp(ctx, obj, stage_idx, obj_runtime_slot);
         obj.file_name = Some(name.to_string());
+        if matches!(obj.object_type, 8 | 11) {
+            let trimmed = name.trim();
+            if let Ok(no) = trimmed.parse::<i64>() {
+                obj.thumb_save_no = no;
+            } else {
+                let stem = std::path::Path::new(trimmed)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(trimmed);
+                if let Ok(no) = stem.parse::<i64>() {
+                    obj.thumb_save_no = no;
+                }
+            }
+        }
         if obj.object_type == 12 {
             obj.emote.file_name = Some(name.to_string());
         }
