@@ -14299,6 +14299,7 @@ fn clear_mwnd_message_block_now(ctx: &mut CommandContext, stage_idx: i64, m: &mu
     clear_mwnd_face_list(ctx, stage_idx, m);
     mwnd_clear_message_layout(m);
     m.name_text.clear();
+    m.name_glyphs.clear();
     m.chara_color_mod = None;
     m.chara_moji_color = None;
     m.chara_shadow_color = None;
@@ -14364,6 +14365,13 @@ fn mwnd_commit_read_flags(ctx: &mut CommandContext, m: &mut MwndState) {
 fn apply_mwnd_novel_clear(ctx: &mut CommandContext, m: &mut MwndState) {
     mwnd_commit_read_flags(ctx, m);
     mwnd_clear_message_layout(m);
+    m.name_text.clear();
+    m.name_glyphs.clear();
+    m.chara_color_mod = None;
+    m.chara_moji_color = None;
+    m.chara_shadow_color = None;
+    m.chara_fuchi_color = None;
+    ctx.ui.clear_name();
     m.key_icon_appear = false;
     m.key_icon_pos = None;
     ctx.ui.clear_message();
@@ -14481,8 +14489,17 @@ pub fn cd_name_current_mwnd(ctx: &mut CommandContext, name: &str) -> bool {
         };
 
         start_mwnd_msg_block_if_needed(ctx, stage_idx, m);
-        if m.name_text.is_empty() {
-            let resolved_name = resolve_gameexe_namae(&ctx.tables, name);
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            m.name_text.clear();
+            m.name_glyphs.clear();
+            m.chara_color_mod = None;
+            m.chara_moji_color = None;
+            m.chara_shadow_color = None;
+            m.chara_fuchi_color = None;
+            ctx.ui.clear_name();
+        } else {
+            let resolved_name = resolve_gameexe_namae(&ctx.tables, trimmed);
             let display_name = resolved_name.display;
             m.chara_color_mod = resolved_name.color_mod;
             m.chara_moji_color = resolved_name.moji_color_no;
@@ -14492,9 +14509,7 @@ pub fn cd_name_current_mwnd(ctx: &mut CommandContext, name: &str) -> bool {
             m.name_text = display_name.clone();
             mwnd_rebuild_name_glyphs(ctx, m, mwnd_idx, &display_name);
             ctx.ui.set_name(display_name.clone());
-            if !display_name.is_empty() {
-                msgbk_add_name(ctx, &display_name);
-            }
+            msgbk_add_name(ctx, &display_name);
         }
         true
     })
@@ -14936,25 +14951,30 @@ fn dispatch_mwnd_item_op(
             true
         }
         MwndOpKind::SetName => {
-            if !m.name_text.is_empty() {
-                push_ok(ctx, ret_form);
-                return true;
-            }
             let s = rhs
                 .and_then(|v| v.as_str())
                 .or_else(|| script_args.iter().find_map(|v| v.as_str()))
                 .unwrap_or("");
-            let resolved_name = resolve_gameexe_namae(&ctx.tables, s);
-            let display_name = resolved_name.display.clone();
-            m.chara_color_mod = resolved_name.color_mod;
-            m.chara_moji_color = resolved_name.moji_color_no;
-            m.chara_shadow_color = resolved_name.shadow_color_no;
-            m.chara_fuchi_color = resolved_name.fuchi_color_no;
-            super::syscom::reveal_config_voice_name(ctx, &display_name);
-            m.name_text = display_name.clone();
-            mwnd_rebuild_name_glyphs(ctx, m, mwnd_idx, &display_name);
-            ctx.ui.set_name(display_name.clone());
-            if !display_name.is_empty() {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                m.name_text.clear();
+                m.name_glyphs.clear();
+                m.chara_color_mod = None;
+                m.chara_moji_color = None;
+                m.chara_shadow_color = None;
+                m.chara_fuchi_color = None;
+                ctx.ui.clear_name();
+            } else {
+                let resolved_name = resolve_gameexe_namae(&ctx.tables, trimmed);
+                let display_name = resolved_name.display.clone();
+                m.chara_color_mod = resolved_name.color_mod;
+                m.chara_moji_color = resolved_name.moji_color_no;
+                m.chara_shadow_color = resolved_name.shadow_color_no;
+                m.chara_fuchi_color = resolved_name.fuchi_color_no;
+                super::syscom::reveal_config_voice_name(ctx, &display_name);
+                m.name_text = display_name.clone();
+                mwnd_rebuild_name_glyphs(ctx, m, mwnd_idx, &display_name);
+                ctx.ui.set_name(display_name.clone());
                 msgbk_add_name(ctx, &display_name);
             }
             push_ok(ctx, ret_form);
@@ -15270,10 +15290,12 @@ fn dispatch_mwnd_item_op(
         }
         MwndOpKind::ClearName => {
             m.name_text.clear();
+            m.name_glyphs.clear();
             m.chara_color_mod = None;
             m.chara_moji_color = None;
             m.chara_shadow_color = None;
             m.chara_fuchi_color = None;
+            ctx.ui.clear_name();
             push_ok(ctx, ret_form);
             true
         }

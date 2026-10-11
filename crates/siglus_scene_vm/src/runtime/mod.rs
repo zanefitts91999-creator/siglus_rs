@@ -4808,6 +4808,21 @@ impl CommandContext {
     }
 
     fn apply_object_event_animations(&mut self) {
+        let has_any_active = self.globals.stage_forms.values().any(|st| {
+            st.object_lists.values().any(|objs| {
+                objs.iter().any(|obj| obj.any_event_active() || obj.runtime.child_objects.iter().any(|c| c.any_event_active()))
+            }) || st.mwnd_lists.values().any(|mwnds| {
+                mwnds.iter().any(|mwnd| {
+                    mwnd.button_list.iter().any(|o| o.any_event_active())
+                        || mwnd.face_list.iter().any(|o| o.any_event_active())
+                        || mwnd.object_list.iter().any(|o| o.any_event_active())
+                })
+            })
+        });
+        if !has_any_active {
+            return;
+        }
+
         let wipe_active = self.globals.wipe.is_some();
         let ids = self.ids.clone();
         let gfx = &mut self.gfx;
@@ -8138,6 +8153,15 @@ impl CommandContext {
     }
 
     fn sync_weather_objects(&mut self, game_delta_ms: i32, real_delta_ms: i32) {
+        let has_weather = self.globals.stage_forms.values().any(|st| {
+            st.object_lists.values().any(|objs| {
+                objs.iter().any(|obj| obj.object_type == 4 && matches!(obj.weather_param.weather_type, 1 | 2))
+            })
+        });
+        if !has_weather {
+            return;
+        }
+
         let wipe_active = self.globals.wipe.is_some();
         let screen_w = self.screen_w.max(1) as i64;
         let screen_h = self.screen_h.max(1) as i64;

@@ -100,7 +100,11 @@ impl ImageHandle {
             .read()
             .expect("image album lock poisoned")
             .len();
-        (cut < count).then(|| Self::new(self.album.clone(), cut))
+        if count == 0 {
+            return None;
+        }
+        let safe_cut = if cut < count { cut } else { 0 };
+        Some(Self::new(self.album.clone(), safe_cut))
     }
 
     fn downgrade(&self) -> WeakImageHandle {
@@ -594,9 +598,6 @@ impl ImageManager {
     /// Used for CHR / sprite image loading.
     pub fn load_g00(&mut self, name: &str, frame_index: u32) -> Result<ImageHandle> {
         if name.contains('|') {
-            if frame_index != 0 {
-                bail!("composed g00 has one texture; invalid frame index {frame_index}");
-            }
             return self.load_g00_composed(name);
         }
 
