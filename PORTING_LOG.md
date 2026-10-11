@@ -338,6 +338,13 @@ powershell -ExecutionPolicy Bypass -File D:\ns\verify_current_hashes.ps1
   2. 在 `globals.rs:7685` 中提前独立借出 `embedded_by_stage` 和 `slot_use_by_stage`，消灭 Rust 借用冲突；
   3. 在 `graphics.rs:796` 中将 `dst.patno` 改为优先从 `pe.patno.get_total_value() as i64` 获取，回退到 `src.base.patno`；
   4. 在 `stage.rs:6665` 中，读档 PCT 恢复遇到错误时仅记录 warn，保留 `obj.backend = ObjectBackend::Gfx` 与原文件名，确保后续每帧运行的自愈系统能自动重试并拉起立绘。
+- **构建与二进制实证校验**：
+  - **Commit**：[`12d8440`](https://github.com/zanefitts91999-creator/siglus_rs/commit/12d8440)
+  - **GitHub Actions Run ID**：`38149513342`（Build Switch NRO (Optimized)，状态：Success）
+  - **Artifact ID**：`11706626785` (`siglus-switch-binaries`)
+  - **二进制规格**：25,304,304 字节
+  - **权威 SHA-256**：`F4E654F5CA5DB74920D46A57EA04E126B021705AA3EADF1E66D0F74625D84B4A`
+  - **本地就绪文件**：[`D:\ns\v13_build\siglus-switch.nro`](file:///D:/ns/v13_build/siglus-switch.nro) 与 [`D:\ns\siglus-switch.nro`](file:///D:/ns/siglus-switch.nro)
 
 
 
