@@ -258,3 +258,25 @@ powershell -ExecutionPolicy Bypass -File D:\ns\verify_current_hashes.ps1
 4. **运行 `wait_and_download.py` 等待构建完成**；
 5. **运行 MTP 脚本传输至 Switch 并实测校验哈希**；
 6. **如实向用户汇报更新结果**。
+
+---
+
+## 📌 M11 阶段修复：存读档菜单翻页卡顿、缩略图槽位消失隐形与缓存同步修复 (Save/Load Menu Slot Restoration & Thumbnail Cache Sync)
+
+- **修改时间**：2026-10-11
+- **对应模块**：
+  - [`crates/siglus_scene_vm/src/runtime/forms/stage.rs`](file:///D:/ns/siglus_rs/crates/siglus_scene_vm/src/runtime/forms/stage.rs)
+  - [`crates/siglus_scene_vm/src/runtime/forms/syscom.rs`](file:///D:/ns/siglus_rs/crates/siglus_scene_vm/src/runtime/forms/syscom.rs)
+- **缺陷现象**：
+  1. 存读档菜单翻页时，某些存档槽位隐形消失或空白；
+  2. 存档复制、交换或删除后，缩略图显示过时的旧数据甚至残留；
+  3. 缩略图编号解析脆弱，对带有前缀或复杂命名的缩略图无法匹配，导致槽位对象无 backend 丢失。
+- **底层根因剖析**：
+  1. **缩略图号提取未接入通用解析器**：在 `stage.rs` 的 `CHANGE_FILE` (L9341-9354) 中，仅对纯数字进行解析，当文件名带前缀（如 `save_01.bmp`、`slot12` 等）时解析失败，导致 `thumb_save_no` 保持为 -1，对象无法加载正确缩略图。
+  2. **空缩略图槽位缺少 Fallback 后端**：在 `OBJECT_CREATE_SAVE_THUMB` (L9743)、`OBJECT_CREATE_CAPTURE_THUMB` (L9774) 以及读档后恢复对象 (L6788, L6865) 时，若缩略图文件尚未生成（未存档的空位），原逻辑未调用 `bind_capture_backend`，使 `obj.backend` 保持为 `ObjectBackend::None`，导致空存档位在渲染树构建中被剔除，槽位隐形消失。
+  3. **内存缩略图缓存未失效**：在 `syscom.rs` 的 `copy_slot`、`change_slot`、`delete_slot` 完成磁盘文件增删换之后，未调用 `clear_thumb_image_cache()`，使内存静态缓存 `THUMB_IMAGE_CACHE` 长期驻留旧句柄。
+- **具体修改方案**：
+  1. 在 `stage.rs` 引入通用解析器 `parse_thumb_number`，并在 `CHANGE_FILE` 中全面替代硬编码数字解析；
+  2. 在 `OBJECT_CREATE_SAVE_THUMB`、`OBJECT_CREATE_CAPTURE_THUMB` 及 `restore_object_backend_after_load` 中，对空图槽位绑定透明 fallback backend (`ctx.images.solid_rgba((0, 0, 0, 0))`)；
+  3. 在 `syscom.rs` 的 `copy_slot`、`change_slot`、`delete_slot` 成功返回前均触发 `super::stage::clear_thumb_image_cache()` 强制失效缓存。
+

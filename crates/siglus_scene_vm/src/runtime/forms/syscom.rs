@@ -2340,6 +2340,7 @@ fn copy_slot(
         src,
         dst,
     );
+    super::stage::clear_thumb_image_cache();
     true
 }
 
@@ -2362,6 +2363,7 @@ fn change_slot(
     slots.swap(a, b);
     swap_save_file(project_dir, quick, save_cnt, quick_cnt, a, b);
     swap_thumb_file(project_dir, save_cnt, quick_cnt, quick, thumb_config, a, b);
+    super::stage::clear_thumb_image_cache();
     true
 }
 
@@ -2388,6 +2390,7 @@ fn delete_slot(
     let path = slot_path_with_counts(project_dir, quick, idx, save_cnt, quick_cnt);
     remove_game_file(&path);
     remove_thumb_file(project_dir, save_cnt, quick_cnt, quick, thumb_config, idx);
+    super::stage::clear_thumb_image_cache();
     existed
 }
 

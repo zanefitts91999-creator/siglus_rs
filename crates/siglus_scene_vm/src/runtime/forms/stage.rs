@@ -327,6 +327,27 @@ fn load_thumb_image_id(ctx: &mut CommandContext, idx: i64) -> Option<ImageHandle
     result
 }
 
+pub(crate) fn parse_thumb_number(name: &str) -> Option<i64> {
+    let trimmed = name.trim();
+    if let Ok(no) = trimmed.parse::<i64>() {
+        return Some(no);
+    }
+    let stem = std::path::Path::new(trimmed)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(trimmed);
+    if let Ok(no) = stem.parse::<i64>() {
+        return Some(no);
+    }
+    let digits: String = stem.chars().filter(|c| c.is_ascii_digit()).collect();
+    if !digits.is_empty() {
+        if let Ok(no) = digits.parse::<i64>() {
+            return Some(no);
+        }
+    }
+    None
+}
+
 fn insert_capture_image_id(
     ctx: &mut CommandContext,
     prefer_object_capture: bool,
@@ -6767,6 +6788,8 @@ fn restore_object_backend_after_load(
                 if let Some(image_id) = load_thumb_image_id(ctx, obj.thumb_save_no) {
                     bind_capture_backend(ctx, obj, stage_idx, image_id);
                 } else {
+                    let fallback = ctx.images.solid_rgba((0, 0, 0, 0));
+                    bind_capture_backend(ctx, obj, stage_idx, fallback);
                     log::warn!(
                         "[SG_SAVELOAD] SAVE_THUMB image missing stage={} slot={} save_no={}",
                         stage_idx,
@@ -6842,6 +6865,8 @@ fn restore_object_backend_after_load(
                 if let Some(image_id) = load_thumb_image_id(ctx, obj.thumb_save_no) {
                     bind_capture_backend(ctx, obj, stage_idx, image_id);
                 } else {
+                    let fallback = ctx.images.solid_rgba((0, 0, 0, 0));
+                    bind_capture_backend(ctx, obj, stage_idx, fallback);
                     log::warn!(
                         "[SG_SAVELOAD] THUMB image missing stage={} slot={} thumb_no={}",
                         stage_idx,
@@ -9314,17 +9339,8 @@ fn dispatch_object_state_op(
         object_free_type_self_like_cpp(ctx, obj, stage_idx, obj_runtime_slot);
         obj.file_name = Some(name.to_string());
         if matches!(obj.object_type, 8 | 11) {
-            let trimmed = name.trim();
-            if let Ok(no) = trimmed.parse::<i64>() {
+            if let Some(no) = parse_thumb_number(name) {
                 obj.thumb_save_no = no;
-            } else {
-                let stem = std::path::Path::new(trimmed)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or(trimmed);
-                if let Ok(no) = stem.parse::<i64>() {
-                    obj.thumb_save_no = no;
-                }
             }
         }
         if obj.object_type == 12 {
@@ -9727,6 +9743,8 @@ fn dispatch_object_state_op(
         if let Some(img_id) = load_thumb_image_id(ctx, save_no) {
             bind_capture_backend(ctx, obj, stage_idx, img_id);
         } else {
+            let fallback = ctx.images.solid_rgba((0, 0, 0, 0));
+            bind_capture_backend(ctx, obj, stage_idx, fallback);
             ctx.unknown
                 .record_note(&format!("save_thumb.image.missing:{save_no}"));
         }
@@ -9758,8 +9776,8 @@ fn dispatch_object_state_op(
         if let Some(img_id) = load_thumb_image_id(ctx, thumb_no) {
             bind_capture_backend(ctx, obj, stage_idx, img_id);
         } else {
-            // C_elm_object::restruct_thumb fails without substituting another
-            // capture texture.
+            let fallback = ctx.images.solid_rgba((0, 0, 0, 0));
+            bind_capture_backend(ctx, obj, stage_idx, fallback);
             ctx.unknown
                 .record_note(&format!("thumb.image.missing:{thumb_no}"));
         }
