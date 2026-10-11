@@ -30,33 +30,28 @@
 | **M5**<br>`e026d8b` | **转场全屏严重闪白屏** (重大里程碑) | 离屏转场合成使用黑色清屏底色，且未完全呈现时暴露给交换链；采样 fallback 纹理为非透明 | 引入 `render_wipe_to_display`，转场精灵直出显示器交换链，使用透明 fallback 纹理 | ✅ **白屏闪烁彻底解决** |
 | **M6**<br>`65ab3a1` | **人名错位、立绘缺失与掉帧** | 1. 人名守卫 `is_empty` 拦截更新且清理不彻底；<br>2. 复合立绘 `patno`/`frame_index` 报错 `bail!` 且 `album_cut` 越界返回 None；<br>3. VM Tick 动画/天气全量空扫描 CPU 瓶颈 | 1. 移除人名守卫并全流程支持清空；<br>2. 移除组合立绘 `patno`/`frame_index` 阻断，`album_cut` 安全 fallback cut 0；<br>3. 增加活跃事件与天气对象极速早退路径 | ✅ **已成功部署至 Switch 实机**<br>双路径回读哈希 100% 匹配 |
 | **M7**<br>`b3df14a` | **存读档卡顿、翻页槽位丢失与主循环深优** | 1. 存读档与翻页密集查询未命中 SD 卡小文件引发大延迟；<br>2. `CHANGE_FILE` 遗漏更新 `thumb_save_no` 且缩略图为 None 时销毁 backend 导致槽位隐形；<br>3. Emote/Movie 每帧全量 stage 空迭代 | 1. 增加 `THUMB_IMAGE_CACHE` 内存缓存，存盘即时失效；<br>2. `CHANGE_FILE` 解析 `thumb_save_no`，空图绑定透明 fallback 保持有效 backend；<br>3. Emote/Movie 增加极速早退路径 | ✅ **云端构建成功，已下载本地**<br>SHA256: `6233DC46...44F2` |
-| **M8**<br>`ffd6dd5` | **Switch 原生级 60 FPS 深度性能重构** | 1. `GlobalState::tick_frame` 与 `tick_stage_form` 每帧触发 13+ 处 `Vec` 堆分配、排序与 HashMap 检索；<br>2. `ObjectPropEvents` 对 36 个 `IntEvent` 每帧全量函数调用与扫描；<br>3. 对话框文字静态停留时每帧全量遍历所有 `glyphs` 与 `message_pages` 重新计算计数；<br>4. `ImageManager::organize()` 与 GPU `textures.retain()` 每帧全量 Hash 表扫描；<br>5. `plan_sprites` 每帧冗余 `clone()` 图像句柄与路径 | 1. 彻底移除所有 13 处每帧 `Vec` 堆分配，采用原地零分配直接迭代；<br>2. `ObjectPropEvents` 引入活跃判定极速路径，静止对象完全跳过 36 个事件的更新；<br>3. 引入 `last_reveal_visible` 缓存，文字静止时完全跳过字形与分页循环；<br>4. 资源整理与纹理淘汰实行 60 帧周期限制；<br>5. 修正借用检查，保持安全零分配结构 | ✅ **云端构建成功，已下载本地就绪**<br>SHA256: `FC1948F3...DEEA` |
+| **M8**<br>`ffd6dd5` | **Switch 原生级 60 FPS 深度性能重构** | 1. `GlobalState::tick_frame` 与 `tick_stage_form` 每帧触发 13+ 处 `Vec` 堆分配、排序与 HashMap 检索；<br>2. `ObjectPropEvents` 对 36 个 `IntEvent` 每帧全量函数调用与扫描；<br>3. 对话框文字静态停留时每帧全量遍历所有 `glyphs` 与 `message_pages` 重新计算计数；<br>4. `ImageManager::organize()` 与 GPU `textures.retain()` 每帧全量 Hash 表扫描；<br>5. `plan_sprites` 每帧冗余 `clone()` 图像句柄与路径 | 1. 彻底移除所有 13 处每帧 `Vec` 堆分配，采用原地零分配直接迭代；<br>2. `ObjectPropEvents` 引入活跃判定极速路径，静止对象完全跳过 36 个事件的更新；<br>3. 引入 `last_reveal_visible` 缓存，文字静止时完全跳过字形与分页循环；<br>4. 资源整理与纹理淘汰实行 60 帧周期限制；<br>5. 修正借用检查，保持安全零分配结构 | ✅ **已成功部署至 Switch 实机**<br>双路径回读哈希 100% 匹配<br>SHA256: `FC1948F3...DEEA` |
 
 ---
 
 ## 🏷️ 三、实机当前与最新待部署版本实证校验 (Deployed vs Latest Build)
 
-### 1. 最新构建完成版本 (M8 - 原生级 60 FPS 深度性能重构版，待注入 Switch 实机)
+### 1. Switch 实机当前在线版本 (M8 - 原生级 60 FPS 深度重构版)
 - **Git Commit**：`ffd6dd5` (`fix(switch): fix borrow conflict in plan_sprites`)
 - **GitHub Actions Run ID**：`38138288012` (Artifact ID: `11702097750`)
-- **文件物理路径**：`D:\ns\siglus-switch.nro` 与 `D:\ns\v12_build\siglus-switch.nro`
 - **文件体积**：`25,292,016` 字节 (24.12 MB)
-- **SHA-256 权威校验和**：
+- **实机部署路径**：
+  - `sdmc:/switch/siglus-switch.nro`
+  - `sdmc:/switch/siglus_rs/siglus-switch.nro`
+- **SHA-256 权威校验和 (实机回读实测)**：
   ```
   FC1948F31BAF9C6EA438AEDEC9A219DEEC6E117BA177D2F75CA451AE5318DEEA
   ```
-- **一键部署脚本**：`powershell -ExecutionPolicy Bypass -File D:\ns\deploy_m8_to_switch.ps1`
+- **实机校验状态**：✅ **双路径回读 100% 匹配**
 
-### 2. 历史构建版本 (M7)
-- **Git Commit**：`b3df14a` (`fix(switch): cache save thumbnails, preserve thumb slots on page turn, and optimize tick loops`)
-- **文件物理路径**：`D:\ns\v11_build\siglus-switch.nro`
-- **文件体积**：`25,300,208` 字节 (24.13 MB)
-- **SHA-256 权威校验和**：`6233DC46262D8B2AEB7EBF82C8C1312697AEEBA7975EB8A27524793DF34144F2`
-
-### 3. Switch 实机当前在线版本 (M6)
-- **Git Commit**：`65ab3a1`
-- **SHA-256 权威校验和**：`78B210C7EA96152E411E8F7AFDEFBCC494E56CB8A59889487C1B40788E7D8413`
-- **运行状态**：已解决人名错位与立绘消失。待连机部署 M8 彻底达到原生级 60 FPS 与存读档缩略图加速。
+### 2. 历史归档版本
+- **M7 (`b3df14a`)**：`6233DC46262D8B2AEB7EBF82C8C1312697AEEBA7975EB8A27524793DF34144F2` (存读档缩略图缓存)
+- **M6 (`65ab3a1`)**：`78B210C7EA96152E411E8F7AFDEFBCC494E56CB8A59889487C1B40788E7D8413` (人名与立绘修复)
 
 ---
 
