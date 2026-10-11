@@ -58,7 +58,7 @@ $(BUILD) $(ROMFS)/shaders:
 
 $(LIBC_DIR)/.patched: $(LIBC_PATCH) | $(BUILD)
 	rm -rf $(LIBC_DIR) $(BUILD)/libc.crate
-	curl -sSfL -o $(BUILD)/libc.crate https://static.crates.io/crates/libc/libc-$(LIBC_VERSION).crate
+	curl -sSfL --retry 5 --retry-delay 2 --retry-all-errors -o $(BUILD)/libc.crate https://static.crates.io/crates/libc/libc-$(LIBC_VERSION).crate
 	echo "$(LIBC_SHA256)  $(BUILD)/libc.crate" | sha256sum -c --quiet -
 	tar -xzf $(BUILD)/libc.crate -C $(BUILD)
 	cd $(LIBC_DIR) && patch -s -p1 < ../../$(LIBC_PATCH)
