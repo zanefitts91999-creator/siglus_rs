@@ -543,6 +543,7 @@ pub struct CommandContext {
     /// tnm_syscom_restart_from_scene(), not the return-to-menu proc.
     pub pending_scene_restart: Option<(String, i32)>,
     runtime_load_completed: bool,
+    pub render_frame_count: u64,
 
     /// Engine-equivalent of `Gp_eng->m_local_save`. Built at GLOBAL_SAVEPOINT and
     /// refreshed by `tnm_load_local_on_file`-equivalent load. Save-to-file dispatch
@@ -1589,6 +1590,7 @@ impl CommandContext {
             frame_clock_sub_ms_ns: 0,
             last_button_hover_sound_pos: None,
             suppress_next_right_syscom_open: false,
+            render_frame_count: 0,
         };
         ctx.set_active_append(initial_append.dir, initial_append.name);
         ctx.apply_gameexe_runtime_defaults();
@@ -4676,6 +4678,10 @@ impl CommandContext {
                 .and_then(|st| st.mwnd_lists.get_mut(&stage_idx))
                 .and_then(|list| list.get_mut(mwnd_idx))
             {
+                if mwnd.last_reveal_visible == Some(visible) {
+                    continue;
+                }
+                mwnd.last_reveal_visible = Some(visible);
                 for page in &mut mwnd.message_pages {
                     for glyph in &mut page.glyphs {
                         glyph.appeared = glyph.ruby || glyph.reveal_index <= visible;
@@ -8374,7 +8380,10 @@ impl CommandContext {
     fn build_render_list_pre_wipe(
         &mut self,
     ) -> (Vec<RenderSprite>, Vec<String>, HashSet<(LayerId, SpriteId)>) {
-        self.images.organize();
+        self.render_frame_count = self.render_frame_count.wrapping_add(1);
+        if self.render_frame_count % 60 == 0 {
+            self.images.organize();
+        }
         self.layers.reset_runtime_effects();
         self.repair_missing_gfx_leaf_images();
         self.apply_object_masks();

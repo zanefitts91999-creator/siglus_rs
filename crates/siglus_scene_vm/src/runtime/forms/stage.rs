@@ -13863,6 +13863,7 @@ fn mwnd_begin_next_message_page(m: &mut MwndState) {
     m.glyphs.clear();
     m.disp_moji_cnt = 0;
     m.hide_moji_cnt = 0;
+    m.last_reveal_visible = None;
     m.cur_msg_type = -1;
     m.cur_msg_type_decided = false;
     m.ruby_start_pos = (0, 0);
@@ -13901,6 +13902,7 @@ fn mwnd_clear_message_layout(m: &mut MwndState) {
     m.ruby_start_ready = false;
     m.disp_moji_cnt = 0;
     m.hide_moji_cnt = 0;
+    m.last_reveal_visible = None;
     m.cur_msg_type = -1;
     m.cur_msg_type_decided = false;
 }

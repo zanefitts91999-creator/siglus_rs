@@ -160,6 +160,7 @@ pub struct Renderer {
     wipe_mask: Option<(WipeMaskCacheKey, Texture)>,
     emotes: HashMap<u64, EmoteTarget>,
     in_frame: bool,
+    frame_count: u64,
     /// Where to save the next frame (`dump_next_frame`).
     dump: Option<PathBuf>,
 }
@@ -184,6 +185,7 @@ impl Renderer {
             wipe_mask: None,
             emotes: HashMap::new(),
             in_frame: false,
+            frame_count: 0,
             dump: None,
         };
         renderer.resize(display_w, display_h);
@@ -288,10 +290,13 @@ impl Renderer {
         if !self.begin() {
             return Ok(());
         }
-        self.textures.retain(|key, _| match key {
-            TexKey::Image(index) => images.contains(ImageKey(*index)),
-            TexKey::External(_) => true,
-        });
+        self.frame_count = self.frame_count.wrapping_add(1);
+        if self.frame_count % 60 == 0 {
+            self.textures.retain(|key, _| match key {
+                TexKey::Image(index) => images.contains(ImageKey(*index)),
+                TexKey::External(_) => true,
+            });
+        }
         self.prepare_emotes(frame);
         let dump = self.dump.take();
         if let Some(path) = dump {
@@ -537,23 +542,27 @@ impl Renderer {
             .extend(self.plan.verts.iter().map(|v| VertexSprite2dData::from(*v)));
         for index in 0..self.plan.draws.len() {
             let draw = &self.plan.draws[index];
-            let handles = [
-                draw.image_id.clone(),
-                draw.mask_image_id.clone(),
-                draw.tonecurve_image_id.clone(),
-                draw.fog_image_id.clone(),
-                draw.wipe_src_image_id.clone(),
-            ];
-            let paths = [
-                draw.mesh_texture_path.clone(),
-                draw.mesh_normal_texture_path.clone(),
-                draw.mesh_toon_texture_path.clone(),
-            ];
-            for handle in handles.into_iter().flatten() {
-                self.image_texture(images, &handle);
+            for handle in [
+                &draw.image_id,
+                &draw.mask_image_id,
+                &draw.tonecurve_image_id,
+                &draw.fog_image_id,
+                &draw.wipe_src_image_id,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                self.image_texture(images, handle);
             }
-            for path in paths.into_iter().flatten() {
-                self.external_texture(&path);
+            for path in [
+                &draw.mesh_texture_path,
+                &draw.mesh_normal_texture_path,
+                &draw.mesh_toon_texture_path,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                self.external_texture(path);
             }
         }
         Ok(())

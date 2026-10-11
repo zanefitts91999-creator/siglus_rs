@@ -1655,14 +1655,15 @@ impl Counter {
     }
 
     pub fn update_time(&mut self, past_game_time: i32, past_real_time: i32) {
-        if self.is_running {
-            let add = if self.real_flag {
-                past_real_time
-            } else {
-                past_game_time
-            };
-            self.cur_time = self.cur_time.saturating_add(add as i64);
+        if !self.is_running {
+            return;
         }
+        let add = if self.real_flag {
+            past_real_time
+        } else {
+            past_game_time
+        };
+        self.cur_time = self.cur_time.saturating_add(add as i64);
 
         if self.frame_mode && !self.frame_loop_flag && self.cur_time >= self.frame_time {
             self.is_running = false;
@@ -4203,6 +4204,9 @@ impl ObjectPropEvents {
     }
 
     pub fn update_time(&mut self, past_game_time: i32, past_real_time: i32) {
+        if !self.any_active() {
+            return;
+        }
         self.patno.update_time(past_game_time, past_real_time);
         self.x.update_time(past_game_time, past_real_time);
         self.y.update_time(past_game_time, past_real_time);
@@ -4249,6 +4253,9 @@ impl ObjectPropEvents {
     }
 
     pub fn frame(&mut self) {
+        if !self.any_active() {
+            return;
+        }
         self.patno.frame();
         self.x.frame();
         self.y.frame();
@@ -4292,43 +4299,44 @@ impl ObjectPropEvents {
         self.frame();
     }
 
+    #[inline(always)]
     pub fn any_active(&self) -> bool {
-        self.patno.check_event()
-            || self.x.check_event()
-            || self.y.check_event()
-            || self.z.check_event()
-            || self.center_x.check_event()
-            || self.center_y.check_event()
-            || self.center_z.check_event()
-            || self.center_rep_x.check_event()
-            || self.center_rep_y.check_event()
-            || self.center_rep_z.check_event()
-            || self.scale_x.check_event()
-            || self.scale_y.check_event()
-            || self.scale_z.check_event()
-            || self.rotate_x.check_event()
-            || self.rotate_y.check_event()
-            || self.rotate_z.check_event()
-            || self.clip_left.check_event()
-            || self.clip_top.check_event()
-            || self.clip_right.check_event()
-            || self.clip_bottom.check_event()
-            || self.src_clip_left.check_event()
-            || self.src_clip_top.check_event()
-            || self.src_clip_right.check_event()
-            || self.src_clip_bottom.check_event()
-            || self.tr.check_event()
-            || self.mono.check_event()
-            || self.reverse.check_event()
-            || self.bright.check_event()
-            || self.dark.check_event()
-            || self.color_r.check_event()
-            || self.color_g.check_event()
-            || self.color_b.check_event()
-            || self.color_rate.check_event()
-            || self.color_add_r.check_event()
-            || self.color_add_g.check_event()
-            || self.color_add_b.check_event()
+        self.patno.loop_type != -1
+            || self.x.loop_type != -1
+            || self.y.loop_type != -1
+            || self.z.loop_type != -1
+            || self.center_x.loop_type != -1
+            || self.center_y.loop_type != -1
+            || self.center_z.loop_type != -1
+            || self.center_rep_x.loop_type != -1
+            || self.center_rep_y.loop_type != -1
+            || self.center_rep_z.loop_type != -1
+            || self.scale_x.loop_type != -1
+            || self.scale_y.loop_type != -1
+            || self.scale_z.loop_type != -1
+            || self.rotate_x.loop_type != -1
+            || self.rotate_y.loop_type != -1
+            || self.rotate_z.loop_type != -1
+            || self.clip_left.loop_type != -1
+            || self.clip_top.loop_type != -1
+            || self.clip_right.loop_type != -1
+            || self.clip_bottom.loop_type != -1
+            || self.src_clip_left.loop_type != -1
+            || self.src_clip_top.loop_type != -1
+            || self.src_clip_right.loop_type != -1
+            || self.src_clip_bottom.loop_type != -1
+            || self.tr.loop_type != -1
+            || self.mono.loop_type != -1
+            || self.reverse.loop_type != -1
+            || self.bright.loop_type != -1
+            || self.dark.loop_type != -1
+            || self.color_r.loop_type != -1
+            || self.color_g.loop_type != -1
+            || self.color_b.loop_type != -1
+            || self.color_rate.loop_type != -1
+            || self.color_add_r.loop_type != -1
+            || self.color_add_g.loop_type != -1
+            || self.color_add_b.loop_type != -1
     }
 
     pub fn end_all(&mut self) {
@@ -4486,6 +4494,9 @@ impl ObjectPropEventLists {
     }
 
     pub fn update_time(&mut self, past_game_time: i32, past_real_time: i32) {
+        if !self.any_active() {
+            return;
+        }
         for ev in &mut self.x_rep {
             ev.update_time(past_game_time, past_real_time);
         }
@@ -4501,6 +4512,9 @@ impl ObjectPropEventLists {
     }
 
     pub fn frame(&mut self) {
+        if !self.any_active() {
+            return;
+        }
         for ev in &mut self.x_rep {
             ev.frame();
         }
@@ -4520,11 +4534,12 @@ impl ObjectPropEventLists {
         self.frame();
     }
 
+    #[inline(always)]
     pub fn any_active(&self) -> bool {
-        self.x_rep.iter().any(|e| e.check_event())
-            || self.y_rep.iter().any(|e| e.check_event())
-            || self.z_rep.iter().any(|e| e.check_event())
-            || self.tr_rep.iter().any(|e| e.check_event())
+        (!self.x_rep.is_empty() && self.x_rep.iter().any(|e| e.loop_type != -1))
+            || (!self.y_rep.is_empty() && self.y_rep.iter().any(|e| e.loop_type != -1))
+            || (!self.z_rep.is_empty() && self.z_rep.iter().any(|e| e.loop_type != -1))
+            || (!self.tr_rep.is_empty() && self.tr_rep.iter().any(|e| e.loop_type != -1))
     }
 
     pub fn end_all(&mut self) {
@@ -5645,14 +5660,16 @@ impl ObjectState {
 
     pub fn tick(&mut self, past_game_time: i32, past_real_time: i32) {
         let delta = past_game_time.max(0);
-        self.runtime
-            .prop_events
-            .update_time(past_game_time, past_real_time);
-        self.runtime.prop_events.frame();
-        self.runtime
-            .prop_event_lists
-            .update_time(past_game_time, past_real_time);
-        self.runtime.prop_event_lists.frame();
+        if self.any_event_active() {
+            self.runtime
+                .prop_events
+                .update_time(past_game_time, past_real_time);
+            self.runtime.prop_events.frame();
+            self.runtime
+                .prop_event_lists
+                .update_time(past_game_time, past_real_time);
+            self.runtime.prop_event_lists.frame();
+        }
         self.frame_action
             .counter
             .update_time(past_game_time, past_real_time);
@@ -5665,14 +5682,15 @@ impl ObjectState {
         if self.object_type == 12 {
             self.emote.tick(past_game_time);
         }
-        self.movie.tick(past_game_time, past_real_time);
+        if self.object_type == 9 {
+            self.movie.tick(past_game_time, past_real_time);
+            if self.movie.just_finished && !self.movie.auto_free_flag {
+                self.movie.pause_flag = true;
+            }
+        }
         self.gan.update_time(past_game_time, past_real_time);
         if matches!(self.object_type, 6 | 7) {
             self.mesh_animation_state.advance_controller_frames(delta);
-        }
-
-        if self.object_type == 9 && self.movie.just_finished && !self.movie.auto_free_flag {
-            self.movie.pause_flag = true;
         }
     }
 
@@ -6236,6 +6254,8 @@ pub struct MwndState {
     /// Original m_disp_moji_cnt and m_hide_moji_cnt.
     pub disp_moji_cnt: i64,
     pub hide_moji_cnt: i64,
+    /// Cached last visible reveal count to skip redundant glyph iterations when text is static.
+    pub last_reveal_visible: Option<usize>,
     pub cur_msg_type: i64,
     pub cur_msg_type_decided: bool,
     pub ruby_start_pos: (i64, i64),
@@ -7530,15 +7550,10 @@ impl GlobalState {
             self.fog_global.frame();
 
             if !self.script.counter_time_stop_flag {
-                let mut counter_ids: Vec<u32> = self.counter_lists.keys().copied().collect();
-                counter_ids.sort_unstable();
-                for counter_id in counter_ids {
+                for (&counter_id, counters) in &mut self.counter_lists {
                     if Some(counter_id) == excall_counter_id {
                         continue;
                     }
-                    let Some(counters) = self.counter_lists.get_mut(&counter_id) else {
-                        continue;
-                    };
                     for counter in counters {
                         counter.update_time(past_game_time, past_real_time);
                     }
@@ -7546,66 +7561,35 @@ impl GlobalState {
             }
 
             if !self.script.frame_action_time_stop_flag {
-                let mut frame_action_ids: Vec<u32> = self.frame_actions.keys().copied().collect();
-                frame_action_ids.sort_unstable();
-                for frame_action_id in frame_action_ids {
+                for (&frame_action_id, fa) in &mut self.frame_actions {
                     if Some(frame_action_id) == excall_frame_action_id {
                         continue;
                     }
-                    let Some(fa) = self.frame_actions.get_mut(&frame_action_id) else {
-                        continue;
-                    };
                     fa.counter.update_time(past_game_time, past_real_time);
                 }
-                let mut frame_action_list_ids: Vec<u32> =
-                    self.frame_action_lists.keys().copied().collect();
-                frame_action_list_ids.sort_unstable();
-                for frame_action_list_id in frame_action_list_ids {
+                for (&frame_action_list_id, list) in &mut self.frame_action_lists {
                     if Some(frame_action_list_id) == excall_frame_action_ch_list_id {
                         continue;
                     }
-                    let Some(list) = self.frame_action_lists.get_mut(&frame_action_list_id) else {
-                        continue;
-                    };
                     for fa in list {
                         fa.counter.update_time(past_game_time, past_real_time);
                     }
                 }
             }
 
-            let mut mask_list_ids: Vec<u32> = self.mask_lists.keys().copied().collect();
-            mask_list_ids.sort_unstable();
-            for mask_list_id in mask_list_ids {
-                let Some(ml) = self.mask_lists.get_mut(&mask_list_id) else {
-                    continue;
-                };
+            for ml in self.mask_lists.values_mut() {
                 ml.tick_frame(past_game_time.max(0));
             }
 
-            let mut screen_form_ids: Vec<u32> = self.screen_forms.keys().copied().collect();
-            screen_form_ids.sort_unstable();
-            for screen_form_id in screen_form_ids {
-                let Some(sc) = self.screen_forms.get_mut(&screen_form_id) else {
-                    continue;
-                };
+            for sc in self.screen_forms.values_mut() {
                 sc.tick(past_game_time.max(0), shake_templates);
             }
 
-            let mut int_event_root_ids: Vec<u32> = self.int_event_roots.keys().copied().collect();
-            int_event_root_ids.sort_unstable();
-            for int_event_root_id in int_event_root_ids {
-                let Some(ev) = self.int_event_roots.get_mut(&int_event_root_id) else {
-                    continue;
-                };
+            for ev in self.int_event_roots.values_mut() {
                 ev.update_time(past_game_time, past_real_time);
                 ev.frame();
             }
-            let mut int_event_list_ids: Vec<u32> = self.int_event_lists.keys().copied().collect();
-            int_event_list_ids.sort_unstable();
-            for int_event_list_id in int_event_list_ids {
-                let Some(events) = self.int_event_lists.get_mut(&int_event_list_id) else {
-                    continue;
-                };
+            for events in self.int_event_lists.values_mut() {
                 for ev in events {
                     ev.update_time(past_game_time, past_real_time);
                     ev.frame();
@@ -7613,14 +7597,12 @@ impl GlobalState {
             }
 
             if !self.script.stage_time_stop_flag {
-                let mut stage_form_ids: Vec<u32> = self.stage_forms.keys().copied().collect();
-                stage_form_ids.sort_unstable();
-                for stage_form_id in stage_form_ids {
+                for (&stage_form_id, st) in &mut self.stage_forms {
                     if Some(stage_form_id) == excall_stage_form_id {
                         continue;
                     }
-                    self.tick_stage_form(
-                        stage_form_id,
+                    Self::tick_stage_form_state(
+                        st,
                         past_game_time,
                         past_real_time,
                         wipe_active,
@@ -7650,36 +7632,28 @@ impl GlobalState {
                     fa.counter.update_time(past_game_time, past_real_time);
                 }
             }
-            self.tick_stage_form(
-                excall.stage_form_id,
-                past_game_time,
-                past_real_time,
-                wipe_active,
-            );
+            if let Some(st) = self.stage_forms.get_mut(&excall.stage_form_id) {
+                Self::tick_stage_form_state(
+                    st,
+                    past_game_time,
+                    past_real_time,
+                    wipe_active,
+                );
+            }
         }
     }
 
-    fn tick_stage_form(
-        &mut self,
-        stage_form_id: u32,
+    fn tick_stage_form_state(
+        st: &mut StageFormState,
         past_game_time: i32,
         past_real_time: i32,
         wipe_active: bool,
     ) {
-        let Some(st) = self.stage_forms.get_mut(&stage_form_id) else {
-            return;
-        };
-
-        let mut object_stage_ids: Vec<i64> = st.object_lists.keys().copied().collect();
-        object_stage_ids.sort_unstable();
-        for object_stage_id in object_stage_ids {
+        for (&object_stage_id, objs) in &mut st.object_lists {
             if object_stage_id == 2 && !wipe_active {
                 continue;
             }
             let embedded_slots = st.embedded_object_slots_by_stage.get(&object_stage_id);
-            let Some(objs) = st.object_lists.get_mut(&object_stage_id) else {
-                continue;
-            };
             for (obj_idx, obj) in objs.iter_mut().enumerate() {
                 if embedded_slots.is_some_and(|slots| slots.contains(&obj_idx)) {
                     continue;
@@ -7688,15 +7662,10 @@ impl GlobalState {
             }
         }
 
-        let mut mwnd_stage_ids: Vec<i64> = st.mwnd_lists.keys().copied().collect();
-        mwnd_stage_ids.sort_unstable();
-        for mwnd_stage_id in mwnd_stage_ids {
+        for (&mwnd_stage_id, mwnds) in &mut st.mwnd_lists {
             if mwnd_stage_id == 2 && !wipe_active {
                 continue;
             }
-            let Some(mwnds) = st.mwnd_lists.get_mut(&mwnd_stage_id) else {
-                continue;
-            };
             for mwnd in mwnds {
                 for obj in &mut mwnd.button_list {
                     obj.tick(past_game_time, past_real_time);
@@ -7710,44 +7679,29 @@ impl GlobalState {
             }
         }
 
-        let mut world_stage_ids: Vec<i64> = st.world_lists.keys().copied().collect();
-        world_stage_ids.sort_unstable();
-        for world_stage_id in world_stage_ids {
+        for (&world_stage_id, worlds) in &mut st.world_lists {
             if world_stage_id == 2 && !wipe_active {
                 continue;
             }
-            let Some(worlds) = st.world_lists.get_mut(&world_stage_id) else {
-                continue;
-            };
             for w in worlds {
                 w.update_time(past_game_time, past_real_time);
                 w.frame();
             }
         }
 
-        let mut effect_stage_ids: Vec<i64> = st.effect_lists.keys().copied().collect();
-        effect_stage_ids.sort_unstable();
-        for effect_stage_id in effect_stage_ids {
+        for (&effect_stage_id, effects) in &mut st.effect_lists {
             if effect_stage_id == 2 && !wipe_active {
                 continue;
             }
-            let Some(effects) = st.effect_lists.get_mut(&effect_stage_id) else {
-                continue;
-            };
             for effect in effects {
                 effect.tick(past_game_time.max(0));
             }
         }
 
-        let mut quake_stage_ids: Vec<i64> = st.quake_lists.keys().copied().collect();
-        quake_stage_ids.sort_unstable();
-        for quake_stage_id in quake_stage_ids {
+        for (&quake_stage_id, quakes) in &mut st.quake_lists {
             if quake_stage_id == 2 && !wipe_active {
                 continue;
             }
-            let Some(quakes) = st.quake_lists.get_mut(&quake_stage_id) else {
-                continue;
-            };
             for quake in quakes {
                 quake.tick(past_game_time.max(0));
             }
