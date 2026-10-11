@@ -32,15 +32,22 @@
 | **M7**<br>`b3df14a` | **存读档卡顿、翻页槽位丢失与主循环深优** | 1. 存读档与翻页密集查询未命中 SD 卡小文件引发大延迟；<br>2. `CHANGE_FILE` 遗漏更新 `thumb_save_no` 且缩略图为 None 时销毁 backend 导致槽位隐形；<br>3. Emote/Movie 每帧全量 stage 空迭代 | 1. 增加 `THUMB_IMAGE_CACHE` 内存缓存，存盘即时失效；<br>2. `CHANGE_FILE` 解析 `thumb_save_no`，空图绑定透明 fallback 保持有效 backend；<br>3. Emote/Movie 增加极速早退路径 | ✅ **云端构建成功，已下载本地**<br>SHA256: `6233DC46...44F2` |
 | **M8**<br>`ffd6dd5` | **Switch 原生级 60 FPS 深度性能重构** | 1. `GlobalState::tick_frame` 与 `tick_stage_form` 每帧触发 13+ 处 `Vec` 堆分配、排序与 HashMap 检索；<br>2. `ObjectPropEvents` 对 36 个 `IntEvent` 每帧全量函数调用与扫描；<br>3. 对话框文字静态停留时每帧全量遍历所有 `glyphs` 与 `message_pages` 重新计算计数；<br>4. `ImageManager::organize()` 与 GPU `textures.retain()` 每帧全量 Hash 表扫描；<br>5. `plan_sprites` 每帧冗余 `clone()` 图像句柄与路径 | 1. 彻底移除所有 13 处每帧 `Vec` 堆分配，采用原地零分配直接迭代；<br>2. `ObjectPropEvents` 引入活跃判定极速路径，静止对象完全跳过 36 个事件的更新；<br>3. 引入 `last_reveal_visible` 缓存，文字静止时完全跳过字形与分页循环；<br>4. 资源整理与纹理淘汰实行 60 帧周期限制；<br>5. 修正借用检查，保持安全零分配结构 | ✅ **已成功部署至 Switch 实机**<br>双路径回读哈希 100% 匹配<br>SHA256: `FC1948F3...DEEA` |
 | **M9**<br>`694daec` | **存档后立绘与属性脱节修复 (初版)** | `IntEvent::set_value` 在无活跃动画 (`loop_type == -1`) 时未同步 `cur_value`，导致 M8 早退机制下 `get_total_value()` 读取到旧的 `cur_value == 0`，角色透明度为 0 彻底隐形 | `IntEvent::set_value` 同步 `cur_value = v`，`get_total_value` 在 `loop_type == -1` 时直接返回 `self.value` | ✅ 源码已合入 |
-| **M10**<br>`cb35f4c` | **彻底纠正转场场景流向 (NEXT=旧, CURRENT=新) 与立绘完美交叉淡入淡出** | 1. 深度复查确认 Siglus 架构中 `TNM_STAGE_FRONT` (Stage 1) 为新画面 (`current`)，`TNM_STAGE_NEXT` (Stage 2) 为转场前保存的旧画面 (`next`)；此前因英文语义误解一度调转；<br>2. 转场期间旧立绘未按 `(1-p)` 衰减导致旧画面人物无法渐变消失 | 1. 修正流向：$p \le 0.001$ 出 `wipe.next`（旧场景），$p \ge 0.999$ 出 `wipe.current`（新场景），结束瞬间与游戏主场景无缝咬合；<br>2. 转场中间态：旧底图保持不透明避免暗闪，旧角色立绘按 $(1-p)$ 平滑淡出，新角色立绘按 $p$ 平滑淡入 | 🚀 **云端构建中**<br>Git Commit: `cb35f4c` |
+| **M10**<br>`cb35f4c` | **彻底纠正转场场景流向 (NEXT=旧, CURRENT=新) 与立绘完美交叉淡入淡出** | 1. 深度复查确认 Siglus 架构中 `TNM_STAGE_FRONT` (Stage 1) 为新画面 (`current`)，`TNM_STAGE_NEXT` (Stage 2) 为转场前保存的旧画面 (`next`)；此前因英文语义误解一度调转；<br>2. 转场期间旧立绘未按 `(1-p)` 衰减导致旧画面人物无法渐变消失 | 1. 修正流向：$p \le 0.001$ 出 `wipe.next`（旧场景），$p \ge 0.999$ 出 `wipe.current`（新场景），结束瞬间与游戏主场景无缝咬合；<br>2. 转场中间态：旧底图保持不透明避免暗闪，旧角色立绘按 $(1-p)$ 平滑淡出，新角色立绘按 $p$ 平滑淡入 | ✅ **云端构建成功，已下载本地就绪**<br>SHA256: `48A50E62...EBCA` |
 
 ---
 
 ## 🏷️ 三、实机当前与最新待部署版本实证校验 (Deployed vs Latest Build)
 
-### 1. 最新构建版本 (M10 - 终极立绘与转场双重修复版，云端构建中)
+### 1. 最新构建版本 (M10 - 终极立绘与转场双重修复版，待注入 Switch 实机)
 - **Git Commit**：`cb35f4c` (`fix(switch): correct horizon wipe scene flow mapping NEXT as old scene and CURRENT as new scene with smooth character crossfade`)
-- **文件状态**：已提交并推送到 GitHub 远程仓库，等待云端编译输出 NRO。
+- **GitHub Actions Run ID**：`38142970328` (Artifact ID: `11703019178`)
+- **文件物理路径**：`D:\ns\siglus-switch.nro` 与 `D:\ns\v13_build\siglus-switch.nro`
+- **文件体积**：`25,300,208` 字节 (24.13 MB)
+- **SHA-256 权威校验和**：
+  ```
+  48A50E6206349DAFC37E04B322EAF41C41D020C69AA30D6A33C248A61D16EBCA
+  ```
+- **一键部署脚本**：`powershell -ExecutionPolicy Bypass -File D:\ns\deploy_m10_to_switch.ps1`
 - **核心修复**：
   1. `IntEvent::set_value` 与 `get_total_value` 属性同步机制（彻底解决 M8 极速早退跳过 `frame()` 导致的立绘透明度脱节为 0 隐形问题）；
   2. `render_wipe_to_display` 转场流向 100% 纠正（NEXT=旧场景 $1-p$，CURRENT=新场景 $p$，底图抗暗降，立绘平滑交叉淡化）。
