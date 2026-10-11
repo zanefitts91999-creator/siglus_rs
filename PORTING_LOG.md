@@ -28,29 +28,23 @@
 | **M3**<br>`579d519` | OBJECT 指令 191 崩溃；转场黑屏 | `OBJECT` 操作符 191 触发未实现 panic；Offscreen Target 启用了 HW Compression 导致采样错误 | 补充 op 191 操作处理；禁用 Offscreen Render Target 的硬件压缩标志 | ✅ 不再触发 191 panic |
 | **M4**<br>`b13f57b` | 编译符号不一致 | 系统常量名称拼写错误 (`SYSCOM_GET_OBJECT_DISP_ONOFF`) | 修正符号定义 | ✅ 编译通过 |
 | **M5**<br>`e026d8b` | **转场全屏严重闪白屏** (重大里程碑) | 离屏转场合成使用黑色清屏底色，且未完全呈现时暴露给交换链；采样 fallback 纹理为非透明 | 引入 `render_wipe_to_display`，转场精灵直出显示器交换链，使用透明 fallback 纹理 | ✅ **白屏闪烁彻底解决** |
-| **M6**<br>`65ab3a1` | **人名错位、立绘缺失与掉帧** | 1. 人名守卫 `is_empty` 拦截更新且清理不彻底；<br>2. 复合立绘 `patno`/`frame_index` 报错 `bail!` 且 `album_cut` 越界返回 None；<br>3. VM Tick 动画/天气全量空扫描 CPU 瓶颈 | 1. 移除人名守卫并全流程支持清空；<br>2. 移除组合立绘 `patno`/`frame_index` 阻断，`album_cut` 安全 fallback cut 0；<br>3. 增加活跃事件与天气对象极速早退路径 | ✅ **CI 编译成功并提取 NRO**<br>待 MTP 写入 Switch 实机 |
+| **M6**<br>`65ab3a1` | **人名错位、立绘缺失与掉帧** | 1. 人名守卫 `is_empty` 拦截更新且清理不彻底；<br>2. 复合立绘 `patno`/`frame_index` 报错 `bail!` 且 `album_cut` 越界返回 None；<br>3. VM Tick 动画/天气全量空扫描 CPU 瓶颈 | 1. 移除人名守卫并全流程支持清空；<br>2. 移除组合立绘 `patno`/`frame_index` 阻断，`album_cut` 安全 fallback cut 0；<br>3. 增加活跃事件与天气对象极速早退路径 | ✅ **已成功部署至 Switch 实机**<br>双路径回读哈希 100% 匹配 |
 
 ---
 
-## 🏷️ 三、实机当前已部署与本地最新编译版本校验 (Deployed vs Latest Build)
+## 🏷️ 三、实机当前已部署版本实证校验 (Current Deployed Release on Switch)
 
-### 1. 本地最新构建版本 (M6 - 本轮产物，待传输至 Switch)
-- **Git Commit**：`65ab3a1` (`fix(switch): resolve speaker name mismatch, handle composed g00 patno, and optimize frame tick`)
-- **文件物理路径**：`D:\ns\siglus-switch.nro` 与 `D:\ns\v10_build\siglus-switch.nro`
-- **文件体积**：`25,296,112` 字节 (24.12 MB)
-- **SHA-256 校验和**：
+- **当前版本**：**M6** (`fix(switch): resolve speaker name mismatch, handle composed g00 patno, and optimize frame tick`)
+- **Git Commit**：`65ab3a1`
+- **本地与实机文件体积**：`25,296,112` 字节 (24.12 MB)
+- **SHA-256 权威校验和**：
   ```
   78B210C7EA96152E411E8F7AFDEFBCC494E56CB8A59889487C1B40788E7D8413
   ```
-- **构建状态**：GitHub Actions Run `38107740838` (Build Switch NRO Optimized) 构建成功，已下载解压至本地。一键传输脚本：`powershell -ExecutionPolicy Bypass -File D:\ns\update_root_nro_v10.ps1`。
-
-### 2. Switch 上一轮已部署版本 (M5)
-- **Git Commit**：`e026d8b`
-- **SHA-256 校验和**：
-  ```
-  27CD06DCFD3A0A03B2E4D6C4E6FB8A03EBAC4EF9968D22B191ADFEDBDFE88D98
-  ```
-- **实机运行状态**：转场闪白已消除，待部署 M6 验证人名、立绘与帧率。
+- **实机部署路径与回读实证**：
+  1. `sdmc:/switch/siglus-switch.nro`：回读 SHA-256 = `78B210C7EA96152E411E8F7AFDEFBCC494E56CB8A59889487C1B40788E7D8413` (✅ PASS)
+  2. `sdmc:/switch/siglus_rs/siglus-switch.nro`：回读 SHA-256 = `78B210C7EA96152E411E8F7AFDEFBCC494E56CB8A59889487C1B40788E7D8413` (✅ PASS)
+- **实机运行状态**：最新二进制已注入 Switch，已修复人名错位、组合立绘加载失败及帧率空循环。
 
 ---
 
