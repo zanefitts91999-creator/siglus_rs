@@ -66,16 +66,13 @@
 
 ---
 
-## 🔍 四、待解决核心问题深度剖析与源码修复方案 (Pending Issues & Fixes)
+## 🏛️ 四、历史重大缺陷攻坚技术复盘归档 (Historical Milestones Technical Post-Mortem)
 
-用户最新实测反馈聚焦在三大问题：
-1. **对话框话与人名错位**（说话的人与显示的名字不匹配、名字卡在上一人未更新）；
-2. **人物立绘/差分缺失**（部分人物立绘、表情差分消失或隐形）；
-3. **游戏运行卡顿**（Switch 实机帧率约 20~25 FPS，存在 CPU 瓶颈）。
+> **归档说明**：本节收录此前在 M6、M8 等重大阶段中排查并彻底解决的关键技术根因与修复思路，留存作为引擎架构参考，**非当前待解决问题**。当前实际工作进度以“第三节版本校验”与“第七节 M11 阶段”为准。
 
 ---
 
-### 🔴 缺陷 1：对话框说话人名称错位 / 滞后不更新 (Speaker Name Mismatch)
+### ✅ [已彻底解决 - 归档于 M6] 缺陷 1：对话框说话人名称错位 / 滞后不更新 (Speaker Name Mismatch)
 
 #### 1. 现象描述
 在游戏推进过程中，说话的角色已经改变，但对话框名牌（Nameplate）依然显示前一个角色的名字；或者旁白/独白时前一个角色的名字依然残留。
@@ -160,7 +157,7 @@
 
 ---
 
-### 🔴 缺陷 2：人物立绘缺失 / 差分表情不显示 (Missing Character Sprites)
+### ✅ [已彻底解决 - 归档于 M6/M10] 缺陷 2：人物立绘缺失 / 差分表情不显示与转场截断 (Missing Character Sprites & Crossfade)
 
 #### 1. 现象描述
 部分角色的立绘、或从一个表情切换到另一个表情时，人物没有出现，画面中原本应有立绘的地方空白。
@@ -199,7 +196,7 @@
 
 ---
 
-### 🟡 优化项 3：Switch 实机运行卡顿 / CPU VM Tick 耗时偏高 (Performance Lag)
+### ✅ [已彻底解决 - 归档于 M8] 优化项 3：Switch 实机 60 FPS 零分配深度重构 (60 FPS Performance Re-architecture)
 
 #### 1. 现象描述与实测数据
 在 `siglus_switch.log` 中记录的真实帧耗时：
@@ -249,15 +246,19 @@ powershell -ExecutionPolicy Bypass -File D:\ns\verify_current_hashes.ps1
 ## 🚀 六、新对话 / 接力 Agent 执行指南 (Handover Instructions)
 
 如果此对话结束，新会话的 Agent 按照以下顺序执行：
-1. **优先通读本文档**：定位至第四节的代码修改方案；
-2. **实施代码修改**：
-   - 编辑 `crates/siglus_scene_vm/src/runtime/forms/stage.rs` 修复人名错位问题；
-   - 编辑 `crates/siglus_scene_vm/src/runtime/graphics.rs` 和 `crates/siglus_scene_vm/src/image_manager.rs` 修复立绘与差分表情丢失问题；
-   - 编辑 `crates/siglus_scene_vm/src/runtime/mod.rs` 添加动画更新快速跳过；
-3. **提交并推送至 `myfork/main`**；
-4. **运行 `wait_and_download.py` 等待构建完成**；
-5. **运行 MTP 脚本传输至 Switch 并实测校验哈希**；
-6. **如实向用户汇报更新结果**。
+1. **优先通读本文档第二、三节**：确认当前已发布的里程碑状态与最新二进制哈希校验；
+2. **核验当前任务断点 (M11)**：
+   - M11 代码已提交至 `myfork/main` (`0a932ac`)；
+   - 包含：`stage.rs` 缩略图号通用提取、空槽位透明 fallback backend 绑定与 `syscom.rs` 缓存强制失效；
+3. **获取最新构建与实证哈希**：
+   - 运行 `python D:\ns\wait_and_download_m11.py` 获取最新 Switch NRO 二进制并记录真实 SHA-256；
+4. **运行 MTP 部署脚本传输至 Switch 并实测校验哈希**：
+   - 通过 `powershell -ExecutionPolicy Bypass -File D:\ns\deploy_m10_to_switch.ps1`（或对应的 M11 部署脚本）写入双路径；
+5. **在 Switch 实机上验证测试**：
+   - 验证转场立绘平滑淡出淡入；
+   - 验证存档后立绘正常显示；
+   - 验证存读档菜单翻页时槽位与缩略图不消失、不卡顿；
+6. **如实向用户汇报真实更新结果与测试表现**。
 
 ---
 
