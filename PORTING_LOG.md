@@ -29,23 +29,26 @@
 | **M4**<br>`b13f57b` | 编译符号不一致 | 系统常量名称拼写错误 (`SYSCOM_GET_OBJECT_DISP_ONOFF`) | 修正符号定义 | ✅ 编译通过 |
 | **M5**<br>`e026d8b` | **转场全屏严重闪白屏** (重大里程碑) | 离屏转场合成使用黑色清屏底色，且未完全呈现时暴露给交换链；采样 fallback 纹理为非透明 | 引入 `render_wipe_to_display`，转场精灵直出显示器交换链，使用透明 fallback 纹理 | ✅ **白屏闪烁彻底解决** |
 | **M6**<br>`65ab3a1` | **人名错位、立绘缺失与掉帧** | 1. 人名守卫 `is_empty` 拦截更新且清理不彻底；<br>2. 复合立绘 `patno`/`frame_index` 报错 `bail!` 且 `album_cut` 越界返回 None；<br>3. VM Tick 动画/天气全量空扫描 CPU 瓶颈 | 1. 移除人名守卫并全流程支持清空；<br>2. 移除组合立绘 `patno`/`frame_index` 阻断，`album_cut` 安全 fallback cut 0；<br>3. 增加活跃事件与天气对象极速早退路径 | ✅ **已成功部署至 Switch 实机**<br>双路径回读哈希 100% 匹配 |
-| **M7**<br>待提交 | **存读档卡顿、翻页槽位丢失与主循环深优** | 1. 存读档与翻页密集查询未命中 SD 卡小文件引发大延迟；<br>2. `CHANGE_FILE` 遗漏更新 `thumb_save_no` 且缩略图为 None 时销毁 backend 导致槽位隐形；<br>3. Emote/Movie 每帧全量 stage 空迭代 | 1. 增加 `THUMB_IMAGE_CACHE` 内存缓存，存盘即时失效；<br>2. `CHANGE_FILE` 解析 `thumb_save_no`，空图绑定透明 fallback 保持有效 backend；<br>3. Emote/Movie 增加极速早退路径 | 🔄 源码已修改，准备 CI 构建 |
+| **M7**<br>`b3df14a` | **存读档卡顿、翻页槽位丢失与主循环深优** | 1. 存读档与翻页密集查询未命中 SD 卡小文件引发大延迟；<br>2. `CHANGE_FILE` 遗漏更新 `thumb_save_no` 且缩略图为 None 时销毁 backend 导致槽位隐形；<br>3. Emote/Movie 每帧全量 stage 空迭代 | 1. 增加 `THUMB_IMAGE_CACHE` 内存缓存，存盘即时失效；<br>2. `CHANGE_FILE` 解析 `thumb_save_no`，空图绑定透明 fallback 保持有效 backend；<br>3. Emote/Movie 增加极速早退路径 | ✅ **云端构建成功，已下载本地**<br>待 Switch 开启 DBI MTP 注入 |
 
 ---
 
-## 🏷️ 三、实机当前已部署版本实证校验 (Current Deployed Release on Switch)
+## 🏷️ 三、实机当前与最新待部署版本实证校验 (Deployed vs Latest Build)
 
-- **当前版本**：**M6** (`fix(switch): resolve speaker name mismatch, handle composed g00 patno, and optimize frame tick`)
-- **Git Commit**：`65ab3a1`
-- **本地与实机文件体积**：`25,296,112` 字节 (24.12 MB)
+### 1. 最新构建完成版本 (M7 - 待注入 Switch 实机)
+- **Git Commit**：`b3df14a` (`fix(switch): cache save thumbnails, preserve thumb slots on page turn, and optimize tick loops`)
+- **文件物理路径**：`D:\ns\siglus-switch.nro` 与 `D:\ns\v11_build\siglus-switch.nro`
+- **文件体积**：`25,300,208` 字节 (24.13 MB)
 - **SHA-256 权威校验和**：
   ```
-  78B210C7EA96152E411E8F7AFDEFBCC494E56CB8A59889487C1B40788E7D8413
+  6233DC46262D8B2AEB7EBF82C8C1312697AEEBA7975EB8A27524793DF34144F2
   ```
-- **实机部署路径与回读实证**：
-  1. `sdmc:/switch/siglus-switch.nro`：回读 SHA-256 = `78B210C7EA96152E411E8F7AFDEFBCC494E56CB8A59889487C1B40788E7D8413` (✅ PASS)
-  2. `sdmc:/switch/siglus_rs/siglus-switch.nro`：回读 SHA-256 = `78B210C7EA96152E411E8F7AFDEFBCC494E56CB8A59889487C1B40788E7D8413` (✅ PASS)
-- **实机运行状态**：最新二进制已注入 Switch，已修复人名错位、组合立绘加载失败及帧率空循环。
+- **一键部署脚本**：`powershell -ExecutionPolicy Bypass -File D:\ns\deploy_m7_to_switch.ps1`
+
+### 2. Switch 实机当前在线版本 (M6)
+- **Git Commit**：`65ab3a1`
+- **SHA-256 权威校验和**：`78B210C7EA96152E411E8F7AFDEFBCC494E56CB8A59889487C1B40788E7D8413`
+- **运行状态**：已解决人名错位与立绘消失。待部署 M7 解决存读档卡顿与翻页槽位丢失。
 
 ---
 
