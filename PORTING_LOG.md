@@ -485,3 +485,8 @@ ender_wipe_to_display 的 common_prefix 完美衔接，转场前后立绘平滑�
   - **MAP SHA-256**：A36A2DB24FB172A46706124FA54133A1228C5D5FCB04ADD3C72B6B86A44DC767
   - **本地就绪文件**：[D:\ns\v15_build\siglus-switch.nro](file:///D:/ns/v15_build/siglus-switch.nro) 与 [D:\ns\siglus-switch.nro](file:///D:/ns/siglus-switch.nro)
   - **实机部署脚本**：[D:\ns\deploy_m14_to_switch.ps1](file:///D:/ns/deploy_m14_to_switch.ps1)
+- **Switch MTP 实机部署与双路径回读哈希校验**：
+  - **部署时间**：2026-10-22 21:56
+  - **路径 1 (switch/siglus-switch.nro)**：回读哈希 32F3A40EC1E767F10145276C8B59690D0E4D1EBAD6BFFD188EC531333EEBCC66 (100% 一致)
+  - **路径 2 (switch/siglus_rs/siglus-switch.nro)**：回读哈希 32F3A40EC1E767F10145276C8B59690D0E4D1EBAD6BFFD188EC531333EEBCC66 (100% 一致)
+  - **实机部署结论**：已完成双路径原子写入与全量回读 SHA-256 比对校验，实机最新 Phase M14 修复固件部署就绪。
