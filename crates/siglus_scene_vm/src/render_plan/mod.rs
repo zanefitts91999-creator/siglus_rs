@@ -81,11 +81,13 @@ impl FramePlanner {
 
         for s in sprites {
             let sprite = &s.sprite;
+            let img_id = &sprite.image_id;
+            let has_image = img_id.as_ref().is_some_and(|id| images.has_image(id));
             let emote_packet = sprite.emote_render.as_deref();
             // The backend prepares the E-mote texture itself (before
             // drawing); the plan only names it.
             let emote_render_id = emote_packet.map(|packet| packet.render_id);
-            let (source_width, source_height) = if let Some(id) = sprite.image_id.as_ref() {
+            let (source_width, source_height) = if let Some(id) = img_id.as_ref() {
                 images.dimensions(id).unwrap_or((1, 1))
             } else if let Some(packet) = emote_packet {
                 (packet.width, packet.height)
@@ -680,7 +682,7 @@ impl FramePlanner {
                 }
                 continue;
             }
-            if img.is_none() && emote_render_id.is_none() {
+            if !has_image && emote_render_id.is_none() {
                 continue;
             }
             let Some(quad) = sprite_quad_geometry_rect(
