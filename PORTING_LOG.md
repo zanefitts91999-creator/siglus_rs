@@ -391,3 +391,16 @@ powershell -ExecutionPolicy Bypass -File D:\ns\verify_current_hashes.ps1
   4. **FramePlanner 专用零克隆尺寸接口与复合立绘零拷贝**：
      - 在 `crates/siglus_scene_vm/src/image_manager.rs` 实现 `pub fn dimensions(&self, id: &ImageHandle) -> Option<(u32, u32)>` 与 `pub fn has_image(&self, id: &ImageHandle) -> bool`，避免每帧对数百个精灵克隆 `Arc<RgbaImage>`；
      - 优化 `decode_composed_g00_part` 返回 `Arc<RgbaImage>`，复合部件借用零拷贝，节省 80% 像素内存搬运。
+
+- **构建与二进制实证校验**：
+  - **Commit**：[`58e2a86`](https://github.com/zanefitts91999-creator/siglus_rs_switch/commit/58e2a86)
+  - **GitHub Actions Run ID**：`39764792594`（Build Switch NRO (Optimized)，状态：Success）
+  - **Artifact ID**：`12420070730` (`siglus-switch-binaries`)
+  - **二进制规格**：25,304,304 字节
+  - **权威 SHA-256**：`6BF496624B99316225432FDC7C2795C8187271D9ED065DAC4CE7C64ACE161AC0`
+  - **ELF SHA-256**：`60686FF2EF0F01167B6CDB3B37598B57A2279D1180ECD9DFD9301FC17CAB6843`
+  - **MAP SHA-256**：`330303483D36451DE2182F0AA33D13279959E6D0976B8F4A06CD18BFA0D2AE64`
+  - **反汇编指令实证**：在 ELF 地址 `0x2c650` (`__wrap__read_r`) 确认注入全套 NULL 防御校验（`0x2c6a4: cbz x0, ...`），彻底阻断空指针流向 `ldr x0, [x0, #0x28]`。
+  - **本地就绪文件**：[`D:
+s14_build\siglus-switch.nro`](file:///D:/ns/v14_build/siglus-switch.nro) 与 [`D:
+s\siglus-switch.nro`](file:///D:/ns/siglus-switch.nro)
