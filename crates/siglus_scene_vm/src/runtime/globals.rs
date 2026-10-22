@@ -1330,6 +1330,7 @@ pub struct BtnSelectRuntimeState {
     pub saved_cur_param: Option<[i64; 28]>,
     pub choices: Vec<BtnSelectChoiceState>,
     pub cursor: usize,
+    pub hovered_index: Option<usize>,
     /// Mouse button currently captured by the selection manager.  The C++
     /// button manager enters PUSH on mouse-down and only decides on a matching
     /// mouse-up; it does not decide immediately on the down event.
@@ -1374,6 +1375,7 @@ impl Default for BtnSelectRuntimeState {
             saved_cur_param: None,
             choices: Vec::new(),
             cursor: 0,
+            hovered_index: None,
             pressed_index: None,
             pressed_inside: false,
             cancel_enable: false,

@@ -925,9 +925,14 @@ fn prepare_stage_btnselitems_from_state(
             .unwrap_or(tmpl.btn_action_no);
         item.animation_offset = (0, 0);
         item.animation_tr = Some(255);
+        let initial_hit = if ctx.input.joypad_mode_active() {
+            item.selected
+        } else {
+            state.hovered_index == Some(idx)
+        };
         item.button_state = if choice.item_type == TNM_SEL_ITEM_TYPE_READ {
             4
-        } else if item.selected && choice.item_type == TNM_SEL_ITEM_TYPE_ON {
+        } else if initial_hit && choice.item_type == TNM_SEL_ITEM_TYPE_ON {
             1
         } else {
             0

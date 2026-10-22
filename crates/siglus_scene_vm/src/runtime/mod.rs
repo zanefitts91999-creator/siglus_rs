@@ -3910,6 +3910,7 @@ impl CommandContext {
             return;
         }
         if let Some(idx) = self.selbtn_hit_index(x, y) {
+            self.globals.selbtn.hovered_index = Some(idx);
             if let Some(pressed) = self.globals.selbtn.pressed_index {
                 let inside = pressed == idx;
                 if self.globals.selbtn.pressed_inside != inside {
@@ -3920,13 +3921,16 @@ impl CommandContext {
             if self.globals.selbtn.cursor != idx {
                 self.globals.selbtn.cursor = idx;
                 self.sync_selbtn_item_selection();
+            } else {
+                self.sync_selbtn_item_selection();
             }
             return;
         }
+        self.globals.selbtn.hovered_index = None;
         if self.globals.selbtn.pressed_index.is_some() && self.globals.selbtn.pressed_inside {
             self.globals.selbtn.pressed_inside = false;
-            self.sync_selbtn_item_selection();
         }
+        self.sync_selbtn_item_selection();
         if self.handle_msg_back_mouse_move() {
             return;
         }
@@ -7087,6 +7091,13 @@ impl CommandContext {
             .get_mut(&self.ids.form_global_stage)
             && let Some(items) = st.btnselitem_lists.get_mut(&TNM_STAGE_FRONT_I64)
         {
+            let is_mouse_mode = !self.input.joypad_mode_active();
+            let active_hit_index = if is_mouse_mode {
+                self.globals.selbtn.hovered_index
+            } else {
+                Some(self.globals.selbtn.cursor)
+            };
+
             for (idx, item) in items.iter_mut().enumerate() {
                 item.selected = idx == self.globals.selbtn.cursor;
                 let selectable = item.item_type == TNM_SEL_ITEM_TYPE_ON_I64;
@@ -7097,7 +7108,7 @@ impl CommandContext {
                     && selectable
                 {
                     TNM_BTN_STATE_PUSH
-                } else if item.selected && selectable {
+                } else if active_hit_index == Some(idx) && selectable {
                     TNM_BTN_STATE_HIT
                 } else {
                     TNM_BTN_STATE_NORMAL
@@ -7110,12 +7121,14 @@ impl CommandContext {
         match &obj.backend {
             globals::ObjectBackend::Gfx => {
                 if let Some(slot) = obj.nested_runtime_slot {
-                    let _ = self.gfx.object_clear(
-                        &mut self.images,
-                        &mut self.layers,
-                        TNM_STAGE_FRONT_I64,
-                        slot as i64,
-                    );
+                    if slot >= crate::runtime::forms::stage::EMBEDDED_OBJECT_SLOT_OFFSET {
+                        let _ = self.gfx.object_clear(
+                            &mut self.images,
+                            &mut self.layers,
+                            TNM_STAGE_FRONT_I64,
+                            slot as i64,
+                        );
+                    }
                 }
             }
             globals::ObjectBackend::None => {}
@@ -7169,11 +7182,13 @@ impl CommandContext {
         match k {
             input::VmKey::ArrowUp => {
                 self.globals.selbtn.cursor = self.next_selbtn_cursor(-1);
+                self.globals.selbtn.hovered_index = Some(self.globals.selbtn.cursor);
                 self.sync_selbtn_item_selection();
                 true
             }
             input::VmKey::ArrowDown => {
                 self.globals.selbtn.cursor = self.next_selbtn_cursor(1);
+                self.globals.selbtn.hovered_index = Some(self.globals.selbtn.cursor);
                 self.sync_selbtn_item_selection();
                 true
             }
@@ -7211,6 +7226,7 @@ impl CommandContext {
             input::VmMouseButton::Left => {
                 if let Some(idx) = self.selbtn_hit_index(self.input.mouse_x, self.input.mouse_y) {
                     self.globals.selbtn.cursor = idx;
+                    self.globals.selbtn.hovered_index = Some(idx);
                     self.globals.selbtn.pressed_index = Some(idx);
                     self.globals.selbtn.pressed_inside = true;
                     self.sync_selbtn_item_selection();

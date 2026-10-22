@@ -387,6 +387,9 @@ int main(void) {
         const uint64_t buttons_up = padGetButtonsUp(&pad);
         if (engine != NULL) {
             for (uint8_t button = 0; button < 32; ++button) {
+                // Ignore stick direction threshold buttons (16..23) as discrete button clicks
+                // so they never conflict with analog stick mouse navigation or inject joypad directions.
+                if (button >= 16 && button <= 23) continue;
                 const uint64_t bit = UINT64_C(1) << button;
                 if (buttons_down & bit) siglus_switch_engine_gamepad(engine, button, true);
                 if (buttons_up & bit) siglus_switch_engine_gamepad(engine, button, false);

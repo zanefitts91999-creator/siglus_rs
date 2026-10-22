@@ -1599,7 +1599,7 @@ const TNM_STAGE_CNT: i64 = 3;
 // GfxRuntime stores these sparsely; large namespace offsets do not allocate gaps.
 const EXCALL_BACKEND_SLOT_BASE: usize = 1_000_000;
 const NESTED_OBJECT_SLOT_OFFSET: usize = 100_000;
-const EMBEDDED_OBJECT_SLOT_OFFSET: usize = 200_000;
+pub const EMBEDDED_OBJECT_SLOT_OFFSET: usize = 200_000;
 
 const INIDEF_OBJECT_CNT: usize = 256;
 const INIMAX_OBJECT_CNT: usize = 1024;
@@ -2396,8 +2396,9 @@ fn stage_wipe_object_lists(
             copy_root_object_for_stage_wipe(ctx, st, 2, idx, &front);
 
             if object_wipe_copy_value(ctx, &front) == 0
-                || back_prepared
-                || object_wipe_erase_value(ctx, &back) == 1
+                && (back_prepared
+                    || object_wipe_erase_value(ctx, &back) == 1
+                    || object_wipe_erase_value(ctx, &front) == 1)
             {
                 copy_root_object_for_stage_wipe(ctx, st, 1, idx, &back);
                 let list = st.object_lists.get_mut(&0).unwrap();

@@ -258,6 +258,12 @@ impl SwitchHost {
     }
 
     pub fn gamepad_button(&mut self, button: u8, down: bool) {
+        // Block stick direction threshold buttons (16..=23) so they never fight virtual mouse
+        // or trigger phantom joypad selection focus.
+        if (16..=23).contains(&button) {
+            return;
+        }
+
         // D-pad navigation hides the virtual mouse cursor so arrows don't collide with cursor
         if (12..=15).contains(&button) && down {
             self.cursor_active = false;

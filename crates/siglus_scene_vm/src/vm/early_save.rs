@@ -553,6 +553,7 @@ impl<'a> SceneVm<'a> {
             saved_cur_param: Some(param),
             choices,
             cursor,
+            hovered_index: None,
             pressed_index: None,
             pressed_inside: false,
             cancel_enable,

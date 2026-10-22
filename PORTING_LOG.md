@@ -409,3 +409,68 @@ s\siglus-switch.nro`](file:///D:/ns/siglus-switch.nro)
   - **路径 1 (`switch/siglus-switch.nro`)**：回读哈希 `6BF496624B99316225432FDC7C2795C8187271D9ED065DAC4CE7C64ACE161AC0` (100% 一致)
   - **路径 2 (`switch/siglus_rs/siglus-switch.nro`)**：回读哈希 `6BF496624B99316225432FDC7C2795C8187271D9ED065DAC4CE7C64ACE161AC0` (100% 一致)
   - **实机部署结论**：已完成双路径原子写入与全量回读 SHA-256 比对校验，实机最新优化二进制环境就绪。
+
+---
+
+## Phase M14: 选项后立绘丢失修复 & 摇杆鼠标选区错位与悬停残留根除 (Selection Standee Disappearance & Stick Mouse Hover Glitch Fix)
+
+- **修改时间**：2026-10-22 21:35
+- **阶段版本**：Phase M14
+- **问题现象与具体缺陷表现**：
+  1. **选项后立绘丢失 (Issue 1)**：在对话进行至选项分支、玩家确认选中某个选项后，场景切换或继续推进时，原本立在屏幕前台的角色立绘（Standee/Sprite）出现异常丢失、隐形不显示的现象；
+  2. **摇杆控制鼠标选区错位与高亮残留 (Issue 2)**：在使用左摇杆移动虚拟鼠标光标时，经常在光标并未指向的选项位置上显示被选中高亮效果（Hover/Hit）；且摇杆推向边缘时选项焦点在未选中的选项间乱跳，与光标位置严重脱节。
+
+- **底层根因剖析**：
+  1. **选项后舞台 Wipe 擦除逻辑运算符严重笔误 (Standee Wipe Deletion Bug)**：
+     - 在 crates/siglus_scene_vm/src/runtime/forms/stage.rs:2396-2405 的 stage_wipe_object_lists 中：
+       `
+ust
+       copy_root_object_for_stage_wipe(ctx, st, 2, idx, &front);
+       if object_wipe_copy_value(ctx, &front) == 0
+           || back_prepared
+           || object_wipe_erase_value(ctx, &back) == 1
+       {
+           copy_root_object_for_stage_wipe(ctx, st, 1, idx, &back);
+           let list = st.object_lists.get_mut(&0).unwrap();
+           clear_root_object_for_stage_wipe(ctx, list, 0, idx);
+       }
+       `
+     - 在 Siglus 引擎中，对象的 wipe_copy 属性默认均为 0。当选项被选定后脚本触发画面转场（GLOBAL.WIPE / STAGE.WIPE）时，新场景如果并未在后台 BACK (Stage 0) 为该角色重新分配新立绘，则 ack_prepared == false（ack 为全空默认对象）；
+     - 由于上述条件使用了 ||（逻辑或），导致 object_wipe_copy_value(ctx, &front) == 0 永真！if 分支强行执行，将全空的 ack 覆盖至 FRONT (Stage 1) 并调用 clear_root_object_for_stage_wipe 销毁前台立绘图层与 GPU 纹理引用！
+     - 转场结束后舞台切回 FRONT，立绘已被彻底清空覆灭，导致角色隐形。
+  2. **嵌入式选项对象清理安全边界不足 (Embedded Slot Safety Guard)**：
+     - 在 crates/siglus_scene_vm/src/runtime/mod.rs:7109-7120 的 hide_selbtn_object_backing 中，调用 gfx.object_clear 时未对 
+ested_runtime_slot 是否属于嵌入选项专属槽位（slot >= EMBEDDED_OBJECT_SLOT_OFFSET，即 >= 200_000）进行严格下限校验，存在波及舞台主体立绘 slot 的风险。
+  3. **摇杆边缘阈值按键误流入手柄底层焦点循环 (Stick Direction Button Leak)**：
+     - 在 platform/switch/runtime/source/main.c:386-394：Nintendo Switch libnx 底层在模拟摇杆倾斜超过阈值（约 0.7~0.8）时，会自动在 padGetButtonsDown 中置位 bit 16..19 (StickLLeft/Up/Right/Down) 及 bit 20..23 (StickRLeft/Up/Right/Down)；
+     - main.c 遍历 0..31 并将所有按键发送至 siglus_switch_engine_gamepad；在 switch_host.rs:321 中又直接无条件透传至 self.host.joypad_button；
+     - 摇杆倾斜时不仅移动了虚拟光标，还并发向 VM 注入了手柄离散方向键按键事件，导致 joypad_mode_active = true 并触发行内手柄选项导航逻辑，将按钮焦点强行切换至其他选项。
+  4. **选项悬停状态脱离光标后未重置 (Sticky Selection Hover State)**：
+     - 在 crates/siglus_scene_vm/src/runtime/mod.rs:3912-3929：on_mouse_move 仅在 selbtn_hit_index(x, y) 命中时更新 globals.selbtn.cursor；当光标移至无选项的空白区域时（selbtn_hit_index == None），未清除悬停状态；
+     - 在 sync_selbtn_item_selection 中，凡 idx == selbtn.cursor 的选项均被赋予 TNM_BTN_STATE_HIT 高亮态。导致鼠标光标即使已经移开很远，之前掠过的选项依然保持高亮，形成视觉上的错位。
+
+- **具体修改方案与代码实现**：
+  1. **修正舞台转场擦除核心条件表达式 (修复立绘丢失)**：
+     - 在 crates/siglus_scene_vm/src/runtime/forms/stage.rs：将 || 修正为严格的逻辑与保护：
+       `
+ust
+       if object_wipe_copy_value(ctx, &front) == 0
+           && (back_prepared
+               || object_wipe_erase_value(ctx, &back) == 1
+               || object_wipe_erase_value(ctx, &front) == 1)
+       `
+     - 确保在后台无新立绘就绪（!back_prepared）且无显式擦除指令时，前台存活的主立绘在转场中 100% 完整保留，与 
+ender_wipe_to_display 的 common_prefix 完美衔接，转场前后立绘平滑稳定。
+  2. **选项清理槽位硬件级安全守卫**：
+     - 将 crates/siglus_scene_vm/src/runtime/forms/stage.rs 中的 EMBEDDED_OBJECT_SLOT_OFFSET 提升为 pub const；
+     - 在 crates/siglus_scene_vm/src/runtime/mod.rs 的 hide_selbtn_object_backing 中增加安全断言：仅当 slot >= EMBEDDED_OBJECT_SLOT_OFFSET (200,000) 时才允许调用 gfx.object_clear，彻底绝缘舞台主图层 (0..1000) 误删。
+  3. **阻断摇杆离散按键渗透与按键解绑**：
+     - 在 platform/switch/runtime/source/main.c：遍历按钮循环中增加 if (button >= 16 && button <= 23) continue;，屏蔽 libnx 自动产生的虚拟方向按键；
+     - 在 crates/siglus_scene_vm/src/switch_host.rs：在 gamepad_button 顶部增加 if (16..=23).contains(&button) { return; }，双保险阻断摇杆边缘信号流入 joypad_button。
+  4. **引入独立 hovered_index 消除悬停残留**：
+     - 在 crates/siglus_scene_vm/src/runtime/globals.rs：为 BtnSelectRuntimeState 增加 pub hovered_index: Option<usize> 字段并在 Default / m.rs / early_save.rs 中完整初始化；
+     - 在 crates/siglus_scene_vm/src/runtime/mod.rs：
+       - on_mouse_move 在命中选项时置 hovered_index = Some(idx)，脱离所有选项时置 hovered_index = None 并触发 sync_selbtn_item_selection；
+       - sync_selbtn_item_selection 在鼠标模式下只为 hovered_index 匹配项激活 TNM_BTN_STATE_HIT，光标脱离时全部选项归为 TNM_BTN_STATE_NORMAL；
+       - 手柄方向键导航（ArrowUp / ArrowDown）与鼠标左键点击时同步同步 hovered_index；
+       - 在 crates/siglus_scene_vm/src/runtime/forms/global.rs 中，选项初始生成时根据鼠标/手柄模式精确设置初始高亮状态。
