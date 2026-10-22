@@ -81,14 +81,12 @@ impl FramePlanner {
 
         for s in sprites {
             let sprite = &s.sprite;
-            let img_id = &sprite.image_id;
-            let img = img_id.as_ref().and_then(|id| images.get(id));
             let emote_packet = sprite.emote_render.as_deref();
             // The backend prepares the E-mote texture itself (before
             // drawing); the plan only names it.
             let emote_render_id = emote_packet.map(|packet| packet.render_id);
-            let (source_width, source_height) = if let Some(img) = img.as_ref() {
-                (img.width, img.height)
+            let (source_width, source_height) = if let Some(id) = sprite.image_id.as_ref() {
+                images.dimensions(id).unwrap_or((1, 1))
             } else if let Some(packet) = emote_packet {
                 (packet.width, packet.height)
             } else {
@@ -185,23 +183,19 @@ impl FramePlanner {
             let has_mask = sprite
                 .mask_image_id
                 .as_ref()
-                .and_then(|id| images.get(id))
-                .is_some();
+                .is_some_and(|id| images.has_image(id));
             let has_tonecurve = sprite
                 .tonecurve_image_id
                 .as_ref()
-                .and_then(|id| images.get(id))
-                .is_some();
+                .is_some_and(|id| images.has_image(id));
             let has_wipe_src = sprite
                 .wipe_src_image_id
                 .as_ref()
-                .and_then(|id| images.get(id))
-                .is_some();
+                .is_some_and(|id| images.has_image(id));
             let has_fog_tex = sprite
                 .fog_texture_image_id
                 .as_ref()
-                .and_then(|id| images.get(id))
-                .is_some();
+                .is_some_and(|id| images.has_image(id));
 
             let effects4 = [
                 sprite.mask_mode as f32,

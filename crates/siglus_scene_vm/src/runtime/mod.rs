@@ -11757,13 +11757,11 @@ fn ensure_weather_sprites(
 }
 
 fn set_weather_sprite(
-    ids: &constants::RuntimeConstants,
     layers: &mut LayerManager,
-    _images: &mut ImageManager,
-    obj: &globals::ObjectState,
     layer_id: LayerId,
     sprite_id: SpriteId,
     image_id: Option<ImageHandle>,
+    obj_disp: bool,
     x: i64,
     y: i64,
     alpha: u8,
@@ -11776,8 +11774,10 @@ fn set_weather_sprite(
     let Some(sprite) = layer.sprite_mut(sprite_id) else {
         return;
     };
-    sprite.image_id = image_id.clone();
-    sprite.visible = image_id.is_some() && obj.get_int_prop(ids, ids.obj_disp) != 0 && alpha > 0;
+    if sprite.image_id.as_ref() != image_id.as_ref() {
+        sprite.image_id = image_id;
+    }
+    sprite.visible = sprite.image_id.is_some() && obj_disp && alpha > 0;
     sprite.fit = SpriteFit::PixelRect;
     sprite.size_mode = SpriteSizeMode::Intrinsic;
     // Weather backing sprites store particle-local state.  The object-tree
@@ -11803,6 +11803,14 @@ fn weather_wrap_position(value: i64, extent: i64) -> i64 {
     }
 }
 
+struct WeatherPatternInfo {
+    image_id: Option<ImageHandle>,
+    center_x: i32,
+    center_y: i32,
+    width: u32,
+    height: u32,
+}
+
 fn sync_weather_object_recursive(
     ids: &constants::RuntimeConstants,
     layers: &mut LayerManager,
@@ -11819,20 +11827,59 @@ fn sync_weather_object_recursive(
             return;
         };
 
-        let file_name = obj.file_name.clone().unwrap_or_default();
+        let obj_disp = obj.get_int_prop(ids, ids.obj_disp) != 0;
+        let file_name = obj.file_name.as_deref().unwrap_or_default();
+        let p = &obj.weather_param;
+        let first = p.pat_no_00.min(p.pat_no_01).max(0);
+        let last = p.pat_no_00.max(p.pat_no_01).max(0);
+        let pat_count = if file_name.is_empty() {
+            0
+        } else {
+            ((last - first + 1).max(1) as usize).min(64)
+        };
+
+        let empty_pat = WeatherPatternInfo {
+            image_id: None,
+            center_x: 0,
+            center_y: 0,
+            width: 0,
+            height: 0,
+        };
+
+        let mut pattern_cache: Vec<WeatherPatternInfo> = Vec::with_capacity(pat_count);
+        for i in 0..pat_count {
+            let pat_no = (first + i as i64) as u32;
+            let image_id = images.load_g00(file_name, pat_no).ok();
+            let (center_x, center_y, width, height) = image_id
+                .as_ref()
+                .and_then(|id| images.get(id))
+                .map(|img| (img.center_x, img.center_y, img.width, img.height))
+                .unwrap_or((0, 0, 0, 0));
+            pattern_cache.push(WeatherPatternInfo {
+                image_id,
+                center_x,
+                center_y,
+                width,
+                height,
+            });
+        }
+
         let cnt_max = obj.weather_work.cnt_max.min(obj.weather_work.sub.len());
         let mut used = 0usize;
         for idx in 0..cnt_max {
-            let sub = obj.weather_work.sub[idx].clone();
+            let pat_no = weather_pattern(obj, idx).max(0) as u32;
+            let sub = &obj.weather_work.sub[idx];
             if sub.state == 0 {
                 continue;
             }
-            let pat_no = weather_pattern(obj, idx).max(0) as u32;
-            let image_id = if file_name.is_empty() {
-                None
+
+            let pat_info = if pat_count > 0 && pat_no >= first as u32 {
+                let pidx = ((pat_no - first as u32) as usize).min(pat_count - 1);
+                &pattern_cache[pidx]
             } else {
-                images.load_g00(&file_name, pat_no).ok()
+                pattern_cache.first().unwrap_or(&empty_pat)
             };
+
             let alpha = weather_alpha_for_state(sub.state, sub.state_cur_time, sub.state_time_len);
 
             if obj.weather_param.weather_type == 1 {
@@ -11855,25 +11902,23 @@ fn sync_weather_object_recursive(
                 x = weather_wrap_position(x, screen_w);
                 y = weather_wrap_position(y, screen_h);
 
-                let (over_l, over_r, over_u, over_d) = image_id
-                    .as_ref()
-                    .and_then(|id| images.get(id))
-                    .map(|img| {
-                        let sx = sub.scale_x as f64 / 1000.0;
-                        let sy = sub.scale_y as f64 / 1000.0;
-                        let left = x as f64 - img.center_x as f64 * sx;
-                        let right = x as f64 + (img.width as i64 - img.center_x as i64) as f64 * sx;
-                        let top = y as f64 - img.center_y as f64 * sy;
-                        let bottom =
-                            y as f64 + (img.height as i64 - img.center_y as i64) as f64 * sy;
-                        (
-                            left < 0.0,
-                            right >= screen_w as f64,
-                            top < 0.0,
-                            bottom >= screen_h as f64,
-                        )
-                    })
-                    .unwrap_or((false, false, false, false));
+                let (over_l, over_r, over_u, over_d) = if pat_info.image_id.is_some() {
+                    let sx = sub.scale_x as f64 / 1000.0;
+                    let sy = sub.scale_y as f64 / 1000.0;
+                    let left = x as f64 - pat_info.center_x as f64 * sx;
+                    let right = x as f64 + (pat_info.width as i64 - pat_info.center_x as i64) as f64 * sx;
+                    let top = y as f64 - pat_info.center_y as f64 * sy;
+                    let bottom =
+                        y as f64 + (pat_info.height as i64 - pat_info.center_y as i64) as f64 * sy;
+                    (
+                        left < 0.0,
+                        right >= screen_w as f64,
+                        top < 0.0,
+                        bottom >= screen_h as f64,
+                    )
+                } else {
+                    (false, false, false, false)
+                };
                 let wrap_x = if over_l {
                     screen_w
                 } else if over_r {
@@ -11897,13 +11942,11 @@ fn sync_weather_object_recursive(
                 for offset in offsets.into_iter().flatten() {
                     if let Some(&sid) = sprite_ids.get(used) {
                         set_weather_sprite(
-                            ids,
                             layers,
-                            images,
-                            obj,
                             layer_id,
                             sid,
-                            image_id.clone(),
+                            pat_info.image_id.clone(),
+                            obj_disp,
                             x + offset.0,
                             y + offset.1,
                             alpha,
@@ -11943,7 +11986,16 @@ fn sync_weather_object_recursive(
                     sub.zoom_min + (sub.zoom_max - sub.zoom_min).saturating_mul(process) / 1000;
                 if let Some(&sid) = sprite_ids.get(used) {
                     set_weather_sprite(
-                        ids, layers, images, obj, layer_id, sid, image_id, x, y, alpha, zoom, zoom,
+                        layers,
+                        layer_id,
+                        sid,
+                        pat_info.image_id.clone(),
+                        obj_disp,
+                        x,
+                        y,
+                        alpha,
+                        zoom,
+                        zoom,
                     );
                 }
                 used += 1;

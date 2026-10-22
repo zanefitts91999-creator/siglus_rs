@@ -503,6 +503,24 @@ impl ImageManager {
         self.get_entry(id).map(|(img, _)| img)
     }
 
+    /// Check whether an ImageHandle is still registered and valid, without locking.
+    pub fn has_image(&self, id: &ImageHandle) -> bool {
+        let Some(registered) = self.images.get(&id.key) else {
+            return false;
+        };
+        registered.album.as_ptr() == Arc::as_ptr(&id.album)
+    }
+
+    /// Read image width and height without cloning the underlying pixel buffer.
+    pub fn dimensions(&self, id: &ImageHandle) -> Option<(u32, u32)> {
+        let registered = self.images.get(&id.key)?;
+        if registered.album.as_ptr() != Arc::as_ptr(&id.album) {
+            return None;
+        }
+        let frames = id.album.frames.read().expect("image album lock poisoned");
+        frames.get(id.cut).map(|entry| (entry.img.width, entry.img.height))
+    }
+
     pub fn get_entry(&self, id: &ImageHandle) -> Option<(Arc<RgbaImage>, u64)> {
         let registered = self.images.get(&id.key)?;
         if registered.album.as_ptr() != Arc::as_ptr(&id.album) {
@@ -645,7 +663,7 @@ impl ImageManager {
         Ok(id)
     }
 
-    fn decode_composed_g00_part(&mut self, part: &G00ComposePart) -> Result<RgbaImage> {
+    fn decode_composed_g00_part(&mut self, part: &G00ComposePart) -> Result<Arc<RgbaImage>> {
         let (path, ty) = crate::resource::find_g00_image_with_append_dir(
             &self.project_dir,
             &self.current_append_dir,
@@ -681,7 +699,6 @@ impl ImageManager {
         let cut_no = part.cut_no.clamp(0, max_index as i32) as usize;
         let id = ImageHandle::new(album, cut_no);
         self.get(&id)
-            .map(|img| (*img).clone())
             .with_context(|| format!("missing cached composed g00 image id={}", id.index()))
     }
 
@@ -721,7 +738,8 @@ impl ImageManager {
                 rgba: vec![0; pixel_len],
             }
         } else {
-            self.decode_composed_g00_part(first)?
+            let first_arc = self.decode_composed_g00_part(first)?;
+            (*first_arc).clone()
         };
 
         let base_center_x = composed.center_x;

@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <errno.h>
+#include <reent.h>
+#include <sys/iosupport.h>
 
 #include <switch.h>
 #include <switch/nvidia/address_space.h>
@@ -95,6 +98,29 @@ Result __wrap_nvAddressSpaceMap(NvAddressSpace* address_space, u32 handle,
     Result rc = __real_nvAddressSpaceMap(address_space, handle, cached, kind, output);
     if (R_FAILED(rc)) log_startup_result("nvAddressSpaceMap", rc);
     return rc;
+}
+
+extern const devoptab_t *devoptab_list[];
+extern __handle *__get_handle(int fd);
+extern _ssize_t __real__read_r(struct _reent *r, int fd, void *ptr, size_t len);
+
+_ssize_t __wrap__read_r(struct _reent *r, int fd, void *ptr, size_t len) {
+    if (len == 0) return 0;
+    if (fd < 0 || fd >= 1024) {
+        if (r) r->_errno = EBADF;
+        return -1;
+    }
+    __handle *h = __get_handle(fd);
+    if (!h || !h->fileStruct) {
+        if (r) r->_errno = EBADF;
+        return -1;
+    }
+    int dev = h->device;
+    if (dev < 0 || dev >= 32 || !devoptab_list || !devoptab_list[dev] || !devoptab_list[dev]->read_r) {
+        if (r) r->_errno = EIO;
+        return -1;
+    }
+    return __real__read_r(r, fd, ptr, len);
 }
 
 typedef struct {
