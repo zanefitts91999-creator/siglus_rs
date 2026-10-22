@@ -474,3 +474,14 @@ ender_wipe_to_display 的 common_prefix 完美衔接，转场前后立绘平滑�
        - sync_selbtn_item_selection 在鼠标模式下只为 hovered_index 匹配项激活 TNM_BTN_STATE_HIT，光标脱离时全部选项归为 TNM_BTN_STATE_NORMAL；
        - 手柄方向键导航（ArrowUp / ArrowDown）与鼠标左键点击时同步同步 hovered_index；
        - 在 crates/siglus_scene_vm/src/runtime/forms/global.rs 中，选项初始生成时根据鼠标/手柄模式精确设置初始高亮状态。
+
+- **构建与二进制实证校验**：
+  - **Commit**：[58ab3f](https://github.com/zanefitts91999-creator/siglus_rs_switch/commit/a58ab3f)
+  - **GitHub Actions Run ID**：39779649752（Build Switch NRO (Optimized)，状态：Success）
+  - **Artifact ID**：12425689753 (siglus-switch-binaries)
+  - **NRO 二进制规格**：25,304,304 字节
+  - **权威 NRO SHA-256**：32F3A40EC1E767F10145276C8B59690D0E4D1EBAD6BFFD188EC531333EEBCC66
+  - **ELF SHA-256**：4DA4C41ADE4401B7E18183A004A3B95BEBCCC4F10C0C344D483342F0A778B5A1
+  - **MAP SHA-256**：A36A2DB24FB172A46706124FA54133A1228C5D5FCB04ADD3C72B6B86A44DC767
+  - **本地就绪文件**：[D:\ns\v15_build\siglus-switch.nro](file:///D:/ns/v15_build/siglus-switch.nro) 与 [D:\ns\siglus-switch.nro](file:///D:/ns/siglus-switch.nro)
+  - **实机部署脚本**：[D:\ns\deploy_m14_to_switch.ps1](file:///D:/ns/deploy_m14_to_switch.ps1)
